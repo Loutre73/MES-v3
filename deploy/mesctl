@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# mesctl : installation, mise à jour, retour arrière et sauvegarde du MES v3 sur un site.
+# Usage : ./mesctl <commande> [arguments]   (./mesctl help pour la liste)
+set -euo pipefail
+
+cd "$(dirname "$(readlink -f "$0")")"
+ENV_FILE=site.env
+STATE_DIR=.mesctl
+mkdir -p "$STATE_DIR"
+
+say()  { printf '\033[1m%s\033[0m\n' "$*"; }
+fail() { printf '\033[31mErreur : %s\033[0m\n' "$*" >&2; exit 1; }
+
+compose() { docker compose --env-file "$ENV_FILE" -f docker-compose.yml "$@"; }
+env_get() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2-; }
+env_set() {
+  if grep -qE "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; else echo "$1=$2" >> "$ENV_FILE"; fi
+}
+secret() { head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24; }
+
+require_docker() {
+  command -v docker >/dev/null || fail "Docker n'est pas installé."
+  docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 est requis."
+  docker info >/dev/null 2>&1 || fail "le service Docker ne répond pas."
+}
+require_env() { [ -f "$ENV_FILE" ] || fail "site.env absent : lancez d'abord ./mesctl install"; }
+
+get_images() {
+  # Images de la version : en ligne depuis le registre, ou construites localement pour MES_VERSION=dev
+  if [ "$(env_get MES_VERSION)" = "dev" ]; then
+    local reg; reg=$(env_get MES_REGISTRY); reg=${reg:-ghcr.io/loutre73}
+    docker image inspect "$reg/mes-collector:dev" >/dev/null 2>&1 || compose --profile sim build
+  else
+    compose pull --quiet
+  fi
+}
+
+wait_healthy() {
+  say "Contrôle de santé..."
+  for _ in $(seq 1 60); do
+    if compose ps --format '{{.Service}} {{.State}}' | grep -E '^(db|collector|grafana) ' | grep -vq running; then
+      sleep 2
+    else
+      compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
+      return 0
+    fi
+  done
+  compose ps
+  fail "certains services ne sont pas démarrés (voir ./mesctl logs)."
+}
+
+cmd_install() {
+  require_docker
+  if [ ! -f "$ENV_FILE" ]; then
+    cp site.env.example "$ENV_FILE"
+    for k in DB_PASSWORD MES_READER_PASSWORD GRAFANA_ADMIN_PASSWORD; do env_set "$k" "$(secret)"; done
+    chmod 600 "$ENV_FILE"
+    say "site.env créé avec des mots de passe générés."
+    if [ "${1:-}" = "--demo" ]; then
+      env_set MES_VERSION dev
+      env_set OPCUA_ENDPOINT opc.tcp://simulator:4840
+      env_set COMPOSE_PROFILES sim
+      env_set DB_SHARED_BUFFERS 1GB
+      say "Mode démonstration : simulateur S7-1500 activé, images construites localement."
+    else
+      say "Renseignez OPCUA_ENDPOINT (et la sécurité OPC UA) dans site.env, puis relancez ./mesctl install."
+      exit 0
+    fi
+  fi
+  mkdir -p "$(env_get OPCUA_CERT_DIR || echo ./certs)" "$(env_get BACKUP_DIR || echo ./backups)"
+  get_images
+  compose up -d
+  wait_healthy
+  say "MES v3 $(env_get MES_VERSION) installé. Grafana : http://$(hostname -f 2>/dev/null || hostname):$(env_get GRAFANA_PORT)"
+}
+
+cmd_backup() {
+  require_env
+  local dir keep file
+  dir=$(env_get BACKUP_DIR); dir=${dir:-./backups}; keep=$(env_get BACKUP_KEEP); keep=${keep:-14}
+  mkdir -p "$dir"
+  file="$dir/mes-$(date +%Y%m%d-%H%M%S)-$(env_get MES_VERSION).dump"
+  say "Sauvegarde vers $file"
+  compose exec -T db pg_dump -U mes -d mes -Fc 2>/dev/null > "$file" || fail "échec de la sauvegarde"
+  # rotation : on garde les $keep plus récentes
+  ls -1t "$dir"/mes-*.dump 2>/dev/null | tail -n +"$((keep + 1))" | xargs -r rm -f
+  echo "$file"
+}
+
+cmd_restore() {
+  require_env
+  local file=${1:-}
+  [ -f "$file" ] || fail "fichier de sauvegarde introuvable : $file"
+  say "Restauration de $file"
+  compose stop collector grafana
+  compose exec -T db psql -U mes -d postgres -c "DROP DATABASE IF EXISTS mes WITH (FORCE)" -c "CREATE DATABASE mes"
+  compose exec -T db psql -U mes -d mes -c "SELECT timescaledb_pre_restore()"
+  compose exec -T db pg_restore -U mes -d mes --no-owner < "$file" || true
+  compose exec -T db psql -U mes -d mes -c "SELECT timescaledb_post_restore()"
+}
+
+load_offline() {
+  local archive=$1
+  [ -f "$archive" ] || fail "archive introuvable : $archive"
+  say "Chargement des images depuis $archive"
+  docker load -i "$archive"
+}
+
+cmd_update() {
+  require_docker; require_env
+  local target=${1:-} offline=""
+  [ -n "$target" ] || fail "usage : ./mesctl update <version> [--offline archive.tar]"
+  [ "${2:-}" = "--offline" ] && offline=${3:-}
+  local current; current=$(env_get MES_VERSION)
+  say "Mise à jour $current -> $target"
+  local backup; backup=$(cmd_backup | tail -1)
+  echo "$current" > "$STATE_DIR/previous_version"
+  echo "$backup" > "$STATE_DIR/previous_backup"
+  env_set MES_VERSION "$target"
+  if [ -n "$offline" ]; then load_offline "$offline"; else get_images || { env_set MES_VERSION "$current"; fail "images $target introuvables, version $current conservée."; }; fi
+  # migrations d'abord, collecteur en dernier : son tampon disque couvre la coupure
+  compose up -d db
+  compose up migrate --exit-code-from migrate || { say "Échec des migrations : retour arrière."; cmd_rollback; exit 1; }
+  compose up -d grafana
+  compose up -d collector
+  compose up -d
+  wait_healthy
+  say "Version $target en service. Retour arrière possible : ./mesctl rollback"
+}
+
+cmd_rollback() {
+  require_env
+  [ -f "$STATE_DIR/previous_version" ] || fail "aucune version précédente connue."
+  local prev backup; prev=$(cat "$STATE_DIR/previous_version"); backup=$(cat "$STATE_DIR/previous_backup")
+  say "Retour à la version $prev (sauvegarde $backup)"
+  env_set MES_VERSION "$prev"
+  compose up -d db
+  cmd_restore "$backup"
+  compose up -d
+  wait_healthy
+}
+
+cmd_status() {
+  require_env
+  say "MES v3 version $(env_get MES_VERSION)"
+  compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
+  compose exec -T db psql -U mes -d mes -Atc "
+    SELECT 'tags actifs : ' || count(*) FROM catalog.tag WHERE enabled AND historize
+    UNION ALL SELECT 'points/s (1 min) : ' || round(count(*) / 60.0) FROM historian.value WHERE time > now() - interval '1 minute'
+    UNION ALL SELECT 'retard de collecte : ' || coalesce(round(extract(epoch FROM now() - max(time)))::text || ' s', 'aucune donnée') FROM historian.value WHERE time > now() - interval '1 hour'
+    UNION ALL SELECT 'taille historian : ' || pg_size_pretty(hypertable_size('historian.value'))" 2>/dev/null || true
+  df -h . | tail -1 | awk '{print "disque libre : " $4 " (" $5 " utilisés)"}'
+}
+
+cmd_package() {
+  # Construit l'archive hors ligne d'une version (sur le poste de build, pas sur site)
+  local v=${1:-}; [ -n "$v" ] || fail "usage : ./mesctl package <version>"
+  local reg; reg=$(env_get MES_REGISTRY 2>/dev/null || echo ghcr.io/loutre73); reg=${reg:-ghcr.io/loutre73}
+  local images="$reg/mes-collector:$v $reg/mes-migrate:$v $reg/mes-simulator:$v timescale/timescaledb:2.17.2-pg16 grafana/grafana-oss:11.3.0"
+  for i in $images; do docker image inspect "$i" >/dev/null 2>&1 || docker pull "$i"; done
+  docker save -o "mes-images-$v.tar" $images
+  say "Archive créée : mes-images-$v.tar"
+}
+
+case "${1:-help}" in
+  install)  shift; cmd_install "$@" ;;
+  update)   shift; cmd_update "$@" ;;
+  rollback) cmd_rollback ;;
+  backup)   cmd_backup ;;
+  restore)  shift; cmd_restore "$@" ;;
+  status)   cmd_status ;;
+  logs)     shift; compose logs -f --tail=200 "$@" ;;
+  stop)     compose stop ;;
+  start)    compose up -d; wait_healthy ;;
+  package)  shift; cmd_package "$@" ;;
+  *) cat <<'EOF'
+mesctl - exploitation du MES v3
+
+  install [--demo]           crée site.env, récupère les images et démarre (--demo : avec simulateur)
+  update <version> [--offline archive.tar]
+                             sauvegarde, met à jour les images, migre la base, redémarre
+  rollback                   revient à la version précédente et restaure la sauvegarde d'avant mise à jour
+  backup                     sauvegarde complète de la base (rotation BACKUP_KEEP)
+  restore <fichier.dump>     restaure une sauvegarde
+  status                     version, services, débit et retard de collecte, disque
+  logs [service]             journaux
+  start | stop               démarre ou arrête la pile
+  package <version>          construit l'archive d'images pour un site sans Internet
+EOF
+  ;;
+esac

@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: MES v3
+    folder: MES v3
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
