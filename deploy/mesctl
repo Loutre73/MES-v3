@@ -187,7 +187,9 @@ cmd_monitoring() {
   local profiles; profiles=$(env_get COMPOSE_PROFILES | tr ',' '\n' | grep -v '^monitoring$' | grep -v '^$' | paste -sd, - || true)
   case "${1:-}" in
     on)  env_set COMPOSE_PROFILES "${profiles:+$profiles,}monitoring"
-         compose up -d --remove-orphans; wait_healthy
+         compose up -d --remove-orphans
+         compose restart grafana   # Grafana ne charge la source Prometheus qu'au démarrage
+         wait_healthy
          say "Surveillance active : http://$(hostname -f 2>/dev/null || hostname)$([ "$(env_get WEB_PORT)" = 80 ] || [ -z "$(env_get WEB_PORT)" ] || echo ":$(env_get WEB_PORT)")/systeme" ;;
     off) compose --profile monitoring stop prometheus node-exporter docker-exporter process-exporter postgres-exporter
          compose --profile monitoring rm -f prometheus node-exporter docker-exporter process-exporter postgres-exporter >/dev/null
