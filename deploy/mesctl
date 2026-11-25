@@ -188,7 +188,7 @@ cmd_monitoring() {
   case "${1:-}" in
     on)  env_set COMPOSE_PROFILES "${profiles:+$profiles,}monitoring"
          compose up -d --remove-orphans; wait_healthy
-         say "Surveillance active : Grafana > MES v3 > « Système - supervision technique »" ;;
+         say "Surveillance active : http://$(hostname -f 2>/dev/null || hostname)$([ "$(env_get WEB_PORT)" = 80 ] || [ -z "$(env_get WEB_PORT)" ] || echo ":$(env_get WEB_PORT)")/systeme" ;;
     off) compose --profile monitoring stop prometheus node-exporter docker-exporter process-exporter postgres-exporter
          compose --profile monitoring rm -f prometheus node-exporter docker-exporter process-exporter postgres-exporter >/dev/null
          env_set COMPOSE_PROFILES "$profiles"

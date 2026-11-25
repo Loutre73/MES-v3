@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supervision technique · MES v3</title>
+<style>
+  :root { --bg: #111217; --bar: #181b1f; --line: #2c3235; --text: #ccccdc; --muted: #8e8e9e; --accent: #3d71d9; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+               font: 14px/1.4 Inter, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 8px 16px;
+           background: var(--bar); border-bottom: 1px solid var(--line); min-height: 52px; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0; white-space: nowrap; }
+  h1 small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .spacer { flex: 1; }
+  a { color: var(--text); text-decoration: none; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; white-space: nowrap; }
+  a:hover { background: #22252b; }
+  iframe { display: block; width: 100%; height: calc(100% - 53px); border: 0; background: var(--bg); }
+  @media (max-width: 700px) { iframe { height: calc(100% - 100px); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Supervision technique<small>MES v3</small></h1>
+  <span class="spacer"></span>
+  <a href="/grafana/d/mes-systeme" target="_blank" rel="noopener">Ouvrir dans Grafana ↗</a>
+  <a href="/">Application MES</a>
+  <a href="#" id="logout">Déconnexion</a>
+</header>
+<iframe id="dash" title="Tableau de bord Système"></iframe>
+<script>
+  // Page autonome : le tableau Grafana « Système » en plein écran (période et actualisation dans Grafana).
+  const q = new URLSearchParams(location.search);
+  const src = new URLSearchParams({ orgId: "1", from: "now-" + (q.get("periode") || "1h"), to: "now",
+                                    refresh: q.get("actualisation") || "10s" });
+  document.getElementById("dash").src = "/grafana/d/mes-systeme/systeme?" + src + "&kiosk";
+  document.getElementById("logout").onclick = async e => {
+    e.preventDefault();
+    await fetch("/api/session", { method: "DELETE" });
+    location.reload();
+  };
+</script>
+</body>
+</html>

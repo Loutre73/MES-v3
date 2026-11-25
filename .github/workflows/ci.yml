@@ -57,6 +57,8 @@ jobs:
           for i in $(seq 1 20); do r=$(curl -sf -b cj http://localhost/api/recettes/chargements/$lid | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])"); [ "$r" != en_cours ] && break; sleep 1; done
           echo "chargement : $r"; [ "$r" = acceptee ]
           curl -sf -b cj -o /dev/null http://localhost/grafana/api/health
+          curl -sf -b cj http://localhost/systeme | grep -q 'id="dash"'      # page de supervision technique
+          curl -sf http://localhost/systeme | grep -q '<form'                # sans session : connexion
       - name: Supervision technique (toutes les cibles Prometheus remontent)
         working-directory: deploy
         run: |

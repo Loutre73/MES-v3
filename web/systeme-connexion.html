@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supervision technique · MES v3</title>
+<style>
+  :root { --bg: #111217; --card: #181b1f; --line: #2c3235; --text: #ccccdc; --muted: #8e8e9e; --accent: #3d71d9; --err: #f2495c; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+               font: 14px/1.4 Inter, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: grid; place-items: center; padding: 16px; }
+  form { width: 100%; max-width: 340px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 28px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 20px; }
+  label { display: block; margin: 12px 0 4px; color: var(--muted); }
+  input { width: 100%; padding: 9px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+  button { margin-top: 20px; width: 100%; padding: 10px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  .err { color: var(--err); min-height: 20px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<form id="f">
+  <h1>Supervision technique</h1>
+  <p>MES v3 · connectez-vous avec votre compte MES ou Active Directory.</p>
+  <label for="u">Identifiant</label>
+  <input id="u" autocomplete="username" required autofocus>
+  <label for="p">Mot de passe</label>
+  <input id="p" type="password" autocomplete="current-password" required>
+  <button type="submit">Se connecter</button>
+  <div class="err" id="err" role="alert"></div>
+</form>
+<script>
+  document.getElementById("f").onsubmit = async e => {
+    e.preventDefault();
+    const err = document.getElementById("err");
+    err.textContent = "";
+    const r = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: document.getElementById("u").value, password: document.getElementById("p").value }) });
+    if (r.ok) location.reload();
+    else err.textContent = r.status === 401 ? "Identifiant ou mot de passe incorrect." : "Connexion impossible (" + r.status + ").";
+  };
+</script>
+</body>
+</html>

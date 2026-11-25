@@ -86,7 +86,7 @@ Les versions sont publiées par la CI : un tag Git `v0.2.0` construit et pousse 
 
 ## Supervision technique
 
-Tableau Grafana **Système - supervision technique** (Analyse > Grafana > dossier MES v3), pour le développement et l'exploitation :
+Page web séparée **http://serveur/systeme** (hors de l'application MES, connexion avec un compte MES ou AD) : tableau Grafana **Système - supervision technique** en plein écran, pour le développement et l'exploitation. Options d'URL : `?periode=6h&actualisation=5s`.
 
 | Section | Contenu |
 | --- | --- |
