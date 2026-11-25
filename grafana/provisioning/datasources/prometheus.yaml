@@ -1,0 +1,12 @@
+apiVersion: 1
+datasources:
+  # Surveillance technique (profil "monitoring") : sans lui, le tableau « Système » reste vide.
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: false
+    jsonData:
+      timeInterval: 10s
+      httpMethod: POST
+    editable: false

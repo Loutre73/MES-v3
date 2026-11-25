@@ -181,11 +181,27 @@ cmd_discover() {
   compose exec -T api python -m mes_api.cli decouvrir "$@"
 }
 
+cmd_monitoring() {
+  # Ajoute ou retire le profil "monitoring" de COMPOSE_PROFILES (Prometheus + exporters)
+  require_env
+  local profiles; profiles=$(env_get COMPOSE_PROFILES | tr ',' '\n' | grep -v '^monitoring$' | grep -v '^$' | paste -sd, - || true)
+  case "${1:-}" in
+    on)  env_set COMPOSE_PROFILES "${profiles:+$profiles,}monitoring"
+         compose up -d --remove-orphans; wait_healthy
+         say "Surveillance active : Grafana > MES v3 > « Système - supervision technique »" ;;
+    off) compose --profile monitoring stop prometheus node-exporter docker-exporter process-exporter postgres-exporter
+         compose --profile monitoring rm -f prometheus node-exporter docker-exporter process-exporter postgres-exporter >/dev/null
+         env_set COMPOSE_PROFILES "$profiles"
+         say "Surveillance coupée (les métriques déjà collectées sont conservées dans le volume prometheus-data)." ;;
+    *)   fail "usage : ./mesctl monitoring on|off" ;;
+  esac
+}
+
 cmd_package() {
   # Construit l'archive hors ligne d'une version (sur le poste de build, pas sur site)
   local v=${1:-}; [ -n "$v" ] || fail "usage : ./mesctl package <version>"
   local reg; reg=$(env_get MES_REGISTRY 2>/dev/null || echo ghcr.io/loutre73); reg=${reg:-ghcr.io/loutre73}
-  local images="$reg/mes-collector:$v $reg/mes-migrate:$v $reg/mes-api:$v $reg/mes-web:$v $reg/mes-simulator:$v timescale/timescaledb:2.17.2-pg16 grafana/grafana-oss:11.3.0"
+  local images="$reg/mes-collector:$v $reg/mes-migrate:$v $reg/mes-api:$v $reg/mes-web:$v $reg/mes-simulator:$v timescale/timescaledb:2.17.2-pg16 grafana/grafana-oss:11.3.0 prom/prometheus:v2.55.1 prom/node-exporter:v1.8.2 ncabatoff/process-exporter:0.8.7 python:3.12-slim prometheuscommunity/postgres-exporter:v0.16.0"
   for i in $images; do docker image inspect "$i" >/dev/null 2>&1 || docker pull "$i"; done
   docker save -o "mes-images-$v.tar" $images
   say "Archive créée : mes-images-$v.tar"
@@ -203,6 +219,7 @@ case "${1:-help}" in
   start)    compose up -d; wait_healthy ;;
   package)  shift; cmd_package "$@" ;;
   discover) shift; cmd_discover "$@" ;;
+  monitoring) shift; cmd_monitoring "$@" ;;
   *) cat <<'EOF'
 mesctl - exploitation du MES v3
 
@@ -213,6 +230,7 @@ mesctl - exploitation du MES v3
   backup                     sauvegarde complète de la base (rotation BACKUP_KEEP)
   restore <fichier.dump>     restaure une sauvegarde
   discover [--demo]          découverte automatique des machines de l'automate et ajout au catalogue
+  monitoring on|off          active ou coupe la surveillance technique (Prometheus, tableau Grafana « Système »)
   status                     version, services, débit et retard de collecte, disque
   logs [service]             journaux
   start | stop               démarre ou arrête la pile

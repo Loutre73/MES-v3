@@ -32,7 +32,7 @@ Rôles : opérateur, chef d'équipe, maintenance, administrateur. Avec l'AD, le 
 | `collector` | Client OPC UA : abonnements à 1 s, deadband par tag, écriture par lots, tampon disque, rechargement du catalogue à chaud |
 | `grafana` | Tableaux de bord livrés en fichiers (`grafana/dashboards`) |
 | `simulator` | Simulateur S7-1500 (profil `sim`) : 10 000 tags (moteurs, compteurs, lignes, mesures) et DB de recette |
-| `prometheus` | Surveillance du collecteur (profil `monitoring`) |
+| `prometheus`, `node-exporter`, `docker-exporter`, `process-exporter`, `postgres-exporter` | Surveillance technique (profil `monitoring`), voir « Supervision technique » |
 
 ## Démarrage rapide (démonstration avec simulateur)
 
@@ -83,6 +83,29 @@ Les versions sont publiées par la CI : un tag Git `v0.2.0` construit et pousse 
 - `historian.value_1h` : agrégats horaires calculés depuis les agrégats minute, conservation `AGGREGATE_1H_RETENTION` (3 ans).
 - Entre deux changements, la valeur est la dernière connue : `historian.value_at(tag_id, instant)`, ou `locf()` dans les requêtes Grafana. Le collecteur réécrit la dernière valeur des tags immobiles toutes les 15 min pour borner ces recherches.
 - Une perte de connexion à l'automate écrit une valeur de qualité mauvaise pour chaque tag.
+
+## Supervision technique
+
+Tableau Grafana **Système - supervision technique** (Analyse > Grafana > dossier MES v3), pour le développement et l'exploitation :
+
+| Section | Contenu |
+| --- | --- |
+| Vue d'ensemble | CPU, mémoire, disque le plus plein, charge, conteneurs actifs, points/s écrits, latence API p95, cibles en erreur |
+| Hôte | CPU par mode, mémoire, charge, IO/s et débit disque (lecture/écriture), occupation et attente disque, réseau, systèmes de fichiers |
+| Conteneurs | CPU, mémoire, IO disque et réseau par service ; tableau état, santé, redémarrages, ancienneté |
+| Processus | Tous les processus de l'hôte regroupés par nom : nombre, CPU, mémoire, threads, IO, fichiers ouverts |
+| API | Requêtes/s et latence p50/p95/p99 par route, erreurs 4xx/5xx, distribution des temps de réponse, pool de connexions, tâches de fond |
+| Collecte OPC UA | Session OPC UA, écriture base, débit reçu/retenu/écrit, filtrage deadband, latence d'écriture, file d'attente, tampon disque, incidents |
+| Base de données | Taille, connexions, transactions/s, cache hit, temps des requêtes SQL (pg_stat_statements), requêtes en cours, verrous, tables les plus volumineuses |
+| Prometheus | État de chaque cible, séries et volume |
+
+```bash
+cd deploy
+./mesctl monitoring on      # ajoute le profil monitoring à site.env et démarre Prometheus et les exporters
+./mesctl monitoring off     # les arrête (les métriques déjà collectées restent dans le volume prometheus-data)
+```
+
+Prometheus collecte toutes les 10 s et garde `PROMETHEUS_RETENTION` (15 j) dans la limite de `PROMETHEUS_RETENTION_SIZE` (2 Go). Sur un poste de développement à l'étroit, baisser ce plafond dans `site.env`. Les métriques de l'API (`api:8000/metrics`) et du collecteur (`collector:9108`) ne sont joignables que depuis le réseau Docker. Le tableau se régénère avec `python3 grafana/generate/systeme.py`.
 
 ## Test de charge
 

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
-from . import db
+from . import db, metrics
 
 log = logging.getLogger("events")
 POLL_S = 2.0
@@ -155,11 +156,16 @@ class EventEngine:
 
     async def run(self) -> None:
         while True:
+            t0 = time.perf_counter()
             try:
                 async with db.pool().acquire() as conn:
                     await self.step(conn)
+                metrics.TASK_LAST.labels("evenements").set(time.time())
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
+                metrics.TASK_ERRORS.labels("evenements").inc()
                 log.exception("erreur du moteur d'événements")
+            finally:
+                metrics.TASK_SECONDS.labels("evenements").observe(time.perf_counter() - t0)
             await asyncio.sleep(POLL_S)

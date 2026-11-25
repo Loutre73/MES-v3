@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r collector/requirements.txt -r api/requirements.txt pytest
+      - run: pip install -r collector/requirements.txt -r api/requirements.txt pytest httpx
       - run: cd collector && python -m pytest -q tests
       - run: cd api && python -m pytest -q tests
       - name: Syntaxe de l'interface web
@@ -57,6 +57,18 @@ jobs:
           for i in $(seq 1 20); do r=$(curl -sf -b cj http://localhost/api/recettes/chargements/$lid | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])"); [ "$r" != en_cours ] && break; sleep 1; done
           echo "chargement : $r"; [ "$r" = acceptee ]
           curl -sf -b cj -o /dev/null http://localhost/grafana/api/health
+      - name: Supervision technique (toutes les cibles Prometheus remontent)
+        working-directory: deploy
+        run: |
+          ./mesctl monitoring on
+          for i in $(seq 1 30); do
+            r=$(docker compose --env-file site.env exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/targets?state=active' \
+                | python3 -c "import sys,json; t=json.load(sys.stdin)['data']['activeTargets']; print(len(t), sum(x['health']=='up' for x in t), ' '.join(x['labels']['job'] for x in t if x['health']!='up'))")
+            echo "cibles, en ligne, en erreur : $r"
+            set -- $r; [ "$1" = 7 ] && [ "$2" = 7 ] && exit 0
+            sleep 5
+          done
+          exit 1
       - name: État
         if: always()
         working-directory: deploy
