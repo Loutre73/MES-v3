@@ -49,6 +49,8 @@ services:
       BROWSE_ROOT: ${BROWSE_ROOT:-PLC_1/DataBlocksGlobal}
       SAMPLING_MS: ${SAMPLING_MS:-1000}
       ITEMS_PER_SUBSCRIPTION: ${ITEMS_PER_SUBSCRIPTION:-1000}
+      # le catalogue est alimenté par la découverte de l'application (ou ./mesctl discover)
+      BOOTSTRAP_BROWSE: ${BOOTSTRAP_BROWSE:-false}
     volumes:
       - collector-spool:/spool
       - ${OPCUA_CERT_DIR:-./certs}:/certs:ro
@@ -56,6 +58,51 @@ services:
       migrate:
         condition: service_completed_successfully
     # Le collecteur doit joindre l'automate : sur site, prévoir l'accès au réseau automate.
+
+  api:
+    image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-api:${MES_VERSION:-dev}
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://mes:${DB_PASSWORD}@db:5432/mes
+      MES_VERSION: ${MES_VERSION:-dev}
+      OPCUA_ENDPOINT: ${OPCUA_ENDPOINT}
+      OPCUA_SECURITY: ${OPCUA_SECURITY:-}
+      OPCUA_USERNAME: ${OPCUA_USERNAME:-}
+      OPCUA_PASSWORD: ${OPCUA_PASSWORD:-}
+      OPCUA_WRITE_USERNAME: ${OPCUA_WRITE_USERNAME:-}
+      OPCUA_WRITE_PASSWORD: ${OPCUA_WRITE_PASSWORD:-}
+      BROWSE_ROOT: ${BROWSE_ROOT:-PLC_1/DataBlocksGlobal}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY manquant dans site.env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD manquant dans site.env}
+      AUTH_LDAP_URL: ${AUTH_LDAP_URL:-}
+      AUTH_LDAP_DOMAIN: ${AUTH_LDAP_DOMAIN:-}
+      AUTH_LDAP_BASE_DN: ${AUTH_LDAP_BASE_DN:-}
+      AUTH_LDAP_GROUP_ROLES: ${AUTH_LDAP_GROUP_ROLES:-}
+      SITE_TIMEZONE: ${SITE_TIMEZONE:-Europe/Paris}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - ${OPCUA_CERT_DIR:-./certs}:/certs:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/sante', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-web:${MES_VERSION:-dev}
+    build: ../web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:8080"
+    depends_on:
+      - api
+      - grafana
 
   grafana:
     image: grafana/grafana-oss:11.3.0
@@ -66,13 +113,23 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_DEFAULT_LOCALE: fr-FR
+      # Grafana est servi par l'application sous /grafana/, avec la session MES (pas de second mot de passe)
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_HEADERS: Role:X-WEBAUTH-ROLE
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/mes-performance.json
       MES_READER_PASSWORD: ${MES_READER_PASSWORD}
     volumes:
       - grafana-data:/var/lib/grafana
       - ../grafana/provisioning:/etc/grafana/provisioning:ro
       - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
-    ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+    # Pas de port publié : Grafana n'est joignable qu'à travers l'application (web).
     depends_on:
       migrate:
         condition: service_completed_successfully

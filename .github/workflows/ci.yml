@@ -18,8 +18,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r collector/requirements.txt pytest
+      - run: pip install -r collector/requirements.txt -r api/requirements.txt pytest
       - run: cd collector && python -m pytest -q tests
+      - run: cd api && python -m pytest -q tests
+      - name: Syntaxe de l'interface web
+        run: node --check web/app.js
 
   smoke:
     # Pile complète avec le simulateur : vérifie que les données arrivent dans l'historian
@@ -43,6 +46,17 @@ jobs:
           done
           docker compose --env-file site.env logs collector
           exit 1
+      - name: Application (connexion, découverte, recette chargée dans l'automate simulé)
+        working-directory: deploy
+        run: |
+          pw=$(grep ^ADMIN_PASSWORD site.env | cut -d= -f2)
+          curl -sf -c cj -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$pw\"}" http://localhost/api/session
+          curl -sf -b cj http://localhost/api/catalogue/machines | python3 -c "import sys,json; n=len(json.load(sys.stdin)); print(n, 'machines'); assert n == 125"
+          curl -sf -b cj http://localhost/api/tableau-de-bord > /dev/null
+          lid=$(curl -sf -b cj -X POST http://localhost/api/recettes/versions/1/charger | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          for i in $(seq 1 20); do r=$(curl -sf -b cj http://localhost/api/recettes/chargements/$lid | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])"); [ "$r" != en_cours ] && break; sleep 1; done
+          echo "chargement : $r"; [ "$r" = acceptee ]
+          curl -sf -b cj -o /dev/null http://localhost/grafana/api/health
       - name: État
         if: always()
         working-directory: deploy
@@ -59,6 +73,8 @@ jobs:
           - { name: mes-collector, context: collector }
           - { name: mes-migrate, context: db }
           - { name: mes-simulator, context: simulator }
+          - { name: mes-api, context: ., file: api/Dockerfile }
+          - { name: mes-web, context: web }
     steps:
       - uses: actions/checkout@v4
       - id: version
@@ -72,5 +88,6 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file || format('{0}/Dockerfile', matrix.context) }}
           push: true
           tags: ghcr.io/loutre73/${{ matrix.name }}:${{ steps.version.outputs.v }}

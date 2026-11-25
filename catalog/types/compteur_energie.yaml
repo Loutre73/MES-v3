@@ -1,0 +1,10 @@
+type: compteur_energie
+version: 1
+libelle: Compteur d'énergie électrique
+signature:
+  - { path: Energie_kWh, datatype: LReal }
+membres:
+  - { path: Energie_kWh, unite: kWh, role: compteur_energie, deadband: { type: absolu, valeur: 0.1 } }
+  - { path: Puissance_kW, unite: kW, role: puissance, deadband: { type: pourcent, valeur: 1 }, optionnel: true }
+attributs:
+  - { nom: usage, libelle: "Usage (broyage, utilités...)" }

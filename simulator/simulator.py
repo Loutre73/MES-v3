@@ -64,6 +64,7 @@ class Plant:
         self.rng = rng
         self.instances: list[Instance] = []
         self.changed: list[Var] = []
+        self.recipes: list = []
 
     def set(self, inst: Instance, member: str, value):
         var = inst.vars[member]
@@ -179,8 +180,78 @@ async def build(server: Server, cfg: dict, plant: Plant) -> int:
                 inst.vars[member] = Var(node.nodeid, vtype, init)
                 count += 1
             plant.init_state(inst, db)
+            plant.changed.extend(inst.vars.values())  # publie les valeurs initiales (Marche = vrai...)
             plant.instances.append(inst)
+    for rc in cfg.get("recettes", []):
+        count += await build_recipe_db(dbg, ns, rc, plant)
     return count
+
+
+class RecipeDB:
+    """DB de recette avec échange contrôlé, comme le bloc FB_ChargementRecette fourni pour TIA Portal.
+
+    Demande à 1 : l'automate contrôle le tampon puis copie Tampon -> Actif et répond 1, ou refuse
+    (Reponse = 2, Code = motif). Le MES remet Demande à 0 après lecture de la réponse.
+    """
+
+    def __init__(self, cfg: dict):
+        self.cfg = cfg
+        self.buffer: dict[str, object] = {}
+        self.active: dict[str, object] = {}
+        self.types: dict[str, ua.VariantType] = {}
+        self.request = self.answer = self.code = None
+        self.handled = False
+
+
+async def build_recipe_db(dbg, ns: int, rc: dict, plant: "Plant") -> int:
+    name = rc["db"]
+    rdb = RecipeDB(rc)
+    db_node = await dbg.add_object(ua.NodeId(f'"{name}"', ns), name)
+    buf = await db_node.add_object(ua.NodeId(f'"{name}"."Tampon"', ns), "Tampon")
+    act = await db_node.add_object(ua.NodeId(f'"{name}"."Actif"', ns), "Actif")
+    n = 0
+    for prm in rc["parametres"]:
+        vt = VARIANT[prm.get("datatype", "Real")]
+        val = prm.get("defaut", 0)
+        val = int(val) if vt not in (ua.VariantType.Float, ua.VariantType.Double) else float(val)
+        b = await buf.add_variable(ua.NodeId(f'"{name}"."Tampon"."{prm["nom"]}"', ns), prm["nom"], ua.Variant(val, vt))
+        await b.set_writable()
+        a = await act.add_variable(ua.NodeId(f'"{name}"."Actif"."{prm["nom"]}"', ns), prm["nom"], ua.Variant(val, vt))
+        rdb.buffer[prm["nom"]] = b
+        rdb.active[prm["nom"]] = a
+        rdb.types[prm["nom"]] = vt
+        n += 2
+    rdb.request = await db_node.add_variable(ua.NodeId(f'"{name}"."Demande"', ns), "Demande", ua.Variant(False, ua.VariantType.Boolean))
+    rdb.answer = await db_node.add_variable(ua.NodeId(f'"{name}"."Reponse"', ns), "Reponse", ua.Variant(0, ua.VariantType.Int16))
+    rdb.code = await db_node.add_variable(ua.NodeId(f'"{name}"."Code"', ns), "Code", ua.Variant(0, ua.VariantType.Int16))
+    for v in (rdb.request, rdb.answer):
+        await v.set_writable()
+    plant.recipes.append(rdb)
+    return n + 3
+
+
+async def recipe_step(rdb: RecipeDB) -> None:
+    req = await rdb.request.read_value()
+    if not req:
+        rdb.handled = False
+        return
+    if rdb.handled:
+        return
+    rdb.handled = True
+    values = {k: await node.read_value() for k, node in rdb.buffer.items()}
+    # Contrôle automate simulé : les bornes « automate » du fichier de configuration
+    for prm in rdb.cfg["parametres"]:
+        lim = prm.get("max_automate")
+        if lim is not None and values[prm["nom"]] > lim:
+            await rdb.code.write_value(ua.Variant(2, ua.VariantType.Int16))
+            await rdb.answer.write_value(ua.Variant(2, ua.VariantType.Int16))
+            log.info("recette refusée : %s = %s > %s", prm["nom"], values[prm["nom"]], lim)
+            return
+    for k, v in values.items():
+        await rdb.active[k].write_value(ua.Variant(v, rdb.types[k]))
+    await rdb.code.write_value(ua.Variant(0, ua.VariantType.Int16))
+    await rdb.answer.write_value(ua.Variant(1, ua.VariantType.Int16))
+    log.info("recette acceptée : %s", values)
 
 
 async def main():
@@ -215,13 +286,15 @@ async def main():
         log.info("Serveur OPC UA démarré sur %s", args.endpoint)
         nxt = time.monotonic()
         while True:
-            plant.changed.clear()
-            plant.step(period)
+            plant.step(period)   # le premier tour publie aussi les valeurs initiales
             now = datetime.now(timezone.utc)
             for var in plant.changed:
                 dv = ua.DataValue(ua.Variant(var.value, var.vtype), SourceTimestamp=now, ServerTimestamp=now)
                 await server.write_attribute_value(var.nodeid, dv)
+            for rdb in plant.recipes:
+                await recipe_step(rdb)
             log.debug("%d valeurs modifiées", len(plant.changed))
+            plant.changed.clear()
             nxt += period
             await asyncio.sleep(max(0.0, nxt - time.monotonic()))
 

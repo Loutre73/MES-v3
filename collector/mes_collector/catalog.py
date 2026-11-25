@@ -30,16 +30,17 @@ class TagDef:
     name: str
     data_type: str
     deadband: Deadband
+    role: str | None = None
 
 
 async def load_tags(conn: asyncpg.Connection) -> dict[int, TagDef]:
     rows = await conn.fetch(
-        """SELECT id, node_id, name, data_type, deadband_kind, deadband_value, eu_min, eu_max
+        """SELECT id, node_id, name, data_type, deadband_kind, deadband_value, eu_min, eu_max, role
            FROM catalog.tag WHERE enabled AND historize ORDER BY id"""
     )
     return {
         r["id"]: TagDef(r["id"], r["node_id"], r["name"], r["data_type"],
-                        Deadband(r["deadband_kind"], r["deadband_value"], r["eu_min"], r["eu_max"]))
+                        Deadband(r["deadband_kind"], r["deadband_value"], r["eu_min"], r["eu_max"]), r["role"])
         for r in rows
     }
 

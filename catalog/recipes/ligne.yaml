@@ -1,0 +1,16 @@
+# Type de recette « ligne » : paramètres chargés dans le DB DB_Recette_Ligne de l'automate.
+# Le DB contient Tampon.<param>, Actif.<param> et l'échange Demande (Bool), Reponse (Int), Code (Int).
+# Bloc TIA fourni : FB_ChargementRecette (voir docs/automate-recettes.md).
+type: ligne
+libelle: Recette de ligne
+db: DB_Recette_Ligne
+tampon: Tampon
+actif: Actif
+echange: { demande: Demande, reponse: Reponse, code: Code, delai_s: 10 }
+parametres:
+  - { nom: Vitesse_convoyeur, libelle: Vitesse convoyeur, unite: "%", datatype: Real, min: 0, max: 100, defaut: 60 }
+  - { nom: Debit_cible, libelle: Débit cible, unite: t/h, datatype: Real, min: 0, max: 400, defaut: 150 }
+  - { nom: Temperature, libelle: Température de consigne, unite: °C, datatype: Real, min: 0, max: 250, defaut: 80 }
+  - { nom: Temps_malaxage, libelle: Temps de malaxage, unite: s, datatype: DInt, min: 0, max: 3600, defaut: 120 }
+  - { nom: Humidite_max, libelle: Humidité maximale, unite: "%", datatype: Real, min: 0, max: 30, defaut: 8 }
+  - { nom: Ouverture_trappe, libelle: Ouverture trappe, unite: "%", datatype: Real, min: 0, max: 100, defaut: 50 }
