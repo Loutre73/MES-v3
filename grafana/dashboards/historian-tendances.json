@@ -1,0 +1,83 @@
+{
+  "uid": "mes-tendances",
+  "title": "Historian - tendances",
+  "tags": [
+    "mes-v3"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "editable": false,
+  "templating": {
+    "list": [
+      {
+        "name": "filtre",
+        "label": "Filtre",
+        "type": "textbox",
+        "query": "M101",
+        "current": {
+          "text": "M101",
+          "value": "M101"
+        }
+      },
+      {
+        "name": "tag",
+        "label": "Tags",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "historian"
+        },
+        "multi": true,
+        "includeAll": false,
+        "refresh": 1,
+        "query": "SELECT name AS __text, id AS __value FROM catalog.tag WHERE enabled AND name ILIKE '%' || '$filtre' || '%' ORDER BY name LIMIT 500",
+        "definition": "tags du catalogue filtrés"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Valeurs (dernière valeur connue entre deux changements)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT time_bucket_gapfill(${__interval_ms} * interval '1 millisecond', v.time) AS time,\n       t.name AS metric,\n       locf(last(v.value, v.time), historian.value_at(t.id, $__timeFrom()::timestamptz)) AS value\nFROM historian.value v\nJOIN catalog.tag t ON t.id = v.tag_id\nWHERE $__timeFilter(v.time) AND v.tag_id IN (${tag:csv})\nGROUP BY 1, t.id, t.name\nORDER BY 1"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+# MES v3 - pile standard, identique sur tous les sites.
+# Tout ce qui est propre au site est dans site.env (voir site.env.example).
+name: mes
+
+
+services:
+  db:
+    image: timescale/timescaledb:2.17.2-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mes
+      POSTGRES_USER: mes
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD manquant dans site.env}
+    command: ["postgres", "-c", "shared_buffers=${DB_SHARED_BUFFERS:-4GB}", "-c", "max_wal_size=4GB",
+              "-c", "timescaledb.max_background_workers=8"]
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mes -d mes"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    shm_size: 1g
+
+  migrate:
+    image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-migrate:${MES_VERSION:-dev}
+    build: ../db
+    environment:
+      DATABASE_URL: postgresql://mes:${DB_PASSWORD}@db:5432/mes
+      HISTORIAN_RETENTION: ${HISTORIAN_RETENTION:-1 year}
+      AGGREGATE_1MIN_RETENTION: ${AGGREGATE_1MIN_RETENTION:-1 year}
+      AGGREGATE_1H_RETENTION: ${AGGREGATE_1H_RETENTION:-3 years}
+      MES_READER_PASSWORD: ${MES_READER_PASSWORD:?MES_READER_PASSWORD manquant dans site.env}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  collector:
+    image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-collector:${MES_VERSION:-dev}
+    build: ../collector
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://mes:${DB_PASSWORD}@db:5432/mes
+      OPCUA_ENDPOINT: ${OPCUA_ENDPOINT:?OPCUA_ENDPOINT manquant dans site.env}
+      OPCUA_SECURITY: ${OPCUA_SECURITY:-}
+      OPCUA_USERNAME: ${OPCUA_USERNAME:-}
+      OPCUA_PASSWORD: ${OPCUA_PASSWORD:-}
+      BROWSE_ROOT: ${BROWSE_ROOT:-PLC_1/DataBlocksGlobal}
+      SAMPLING_MS: ${SAMPLING_MS:-1000}
+      ITEMS_PER_SUBSCRIPTION: ${ITEMS_PER_SUBSCRIPTION:-1000}
+    volumes:
+      - collector-spool:/spool
+      - ${OPCUA_CERT_DIR:-./certs}:/certs:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Le collecteur doit joindre l'automate : sur site, prévoir l'accès au réseau automate.
+
+  grafana:
+    image: grafana/grafana-oss:11.3.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD manquant dans site.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DEFAULT_LOCALE: fr-FR
+      MES_READER_PASSWORD: ${MES_READER_PASSWORD}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Simulateur S7-1500 : développement, démonstration et tests (profil "sim")
+  simulator:
+    image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-simulator:${MES_VERSION:-dev}
+    build: ../simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    environment:
+      SIM_TOTAL_TAGS: ${SIM_TOTAL_TAGS:-10000}
+      SIM_CHANGE_RATIO: ${SIM_CHANGE_RATIO:-0.3}
+
+  # Surveillance du serveur et du collecteur (profil "monitoring")
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+volumes:
+  db-data:
+  collector-spool:
+  grafana-data:
+  prometheus-data:

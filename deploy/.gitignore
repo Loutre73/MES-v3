@@ -1,0 +1,5 @@
+site.env
+.mesctl/
+backups/
+certs/
+*.tar

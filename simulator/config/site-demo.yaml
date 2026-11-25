@@ -1,0 +1,12 @@
+# Site de démonstration : 100 moteurs, 20 compteurs d'énergie, 5 lignes,
+# complété par des mesures de process jusqu'à total_tags.
+plc_name: PLC_1
+update_interval_s: 1.0
+seed: 42
+total_tags: 10000
+time_acceleration: 60   # 1 h réelle = 60 h simulées pour la dérive des moteurs
+dbs:
+  - { name: DB_Moteurs, struct: moteur, prefix: M, start: 101, count: 100, drift_ratio: 0.05 }
+  - { name: DB_Energie, struct: compteur_energie, prefix: C, start: 201, count: 20 }
+  - { name: DB_Lignes, struct: ligne, prefix: L, start: 1, count: 5 }
+  - { name: DB_Process, struct: mesure, prefix: P, start: 1, count: 0, fill: true, change_ratio: 0.3 }
