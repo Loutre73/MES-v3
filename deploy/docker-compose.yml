@@ -12,7 +12,10 @@ services:
       POSTGRES_USER: mes
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD manquant dans site.env}
     command: ["postgres", "-c", "shared_buffers=${DB_SHARED_BUFFERS:-4GB}", "-c", "max_wal_size=4GB",
-              "-c", "timescaledb.max_background_workers=8"]
+              "-c", "timescaledb.max_background_workers=8",
+              # pg_stat_statements : temps des requêtes SQL (tableau de bord Système)
+              "-c", "shared_preload_libraries=timescaledb,pg_stat_statements",
+              "-c", "pg_stat_statements.max=1000", "-c", "track_io_timing=on"]
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -144,15 +147,70 @@ services:
       SIM_TOTAL_TAGS: ${SIM_TOTAL_TAGS:-10000}
       SIM_CHANGE_RATIO: ${SIM_CHANGE_RATIO:-0.3}
 
-  # Surveillance du serveur et du collecteur (profil "monitoring")
+  # ---- Surveillance technique (profil "monitoring") : tableau de bord Grafana « Système » ----
+  # Prometheus collecte toutes les 10 s ; volume plafonné par PROMETHEUS_RETENTION_SIZE.
   prometheus:
     image: prom/prometheus:v2.55.1
     profiles: ["monitoring"]
     restart: unless-stopped
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml",
+              "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}",
+              "--storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-2GB}"]
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
+
+  # Hôte Docker : CPU, mémoire, disques (IO/s, débit, occupation), réseau, charge
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command: ["--path.procfs=/host/proc", "--path.sysfs=/host/sys", "--path.rootfs=/rootfs",
+              "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($$|/)",
+              "--collector.netdev.device-exclude=^(veth.*|br-.*|docker0|lo)$$"]
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+
+  # Conteneurs : CPU, mémoire, IO disque et réseau, redémarrages et santé par service.
+  # Petit exporter maison (bibliothèque standard Python) : cAdvisor ne reconnaît pas les conteneurs
+  # avec le magasin d'images containerd de Docker 29+.
+  docker-exporter:
+    image: python:3.12-slim
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command: ["python", "-u", "/app/docker_exporter.py"]
+    volumes:
+      # accès en lecture à l'API Docker : équivalent root sur l'hôte, comme cAdvisor
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./monitoring/docker_exporter.py:/app/docker_exporter.py:ro
+
+  # Processus de l'hôte regroupés par nom : postgres, python (collecteur, API), nginx, grafana...
+  process-exporter:
+    image: ncabatoff/process-exporter:0.8.7
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command: ["--procfs=/host/proc", "--config.path=/config/process-exporter.yml"]
+    volumes:
+      - /proc:/host/proc:ro
+      - ./monitoring/process-exporter.yml:/config/process-exporter.yml:ro
+
+  # PostgreSQL / TimescaleDB : connexions, transactions, cache, verrous, taille
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_URI: db:5432/mes?sslmode=disable
+      DATA_SOURCE_USER: mes
+      DATA_SOURCE_PASS: ${DB_PASSWORD}
+    command: ["--collector.stat_statements", "--collector.long_running_transactions",
+              "--collector.database_wraparound"]
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   db-data:

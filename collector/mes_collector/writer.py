@@ -62,22 +62,27 @@ class Writer:
 
     def put(self, row: Row) -> None:
         self.queue.put_nowait(row)
+        metrics.QUEUE.set(self.queue.qsize())
 
     async def _copy(self, rows: list[Row]) -> None:
         if self.pool is None:
             self.pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=2)
         async with self.pool.acquire() as conn:
-            await conn.copy_records_to_table("value", schema_name="historian", columns=COLUMNS, records=rows)
+            with metrics.WRITE_SECONDS.time():
+                await conn.copy_records_to_table("value", schema_name="historian", columns=COLUMNS, records=rows)
 
     async def _write(self, rows: list[Row]) -> None:
         try:
             await self._copy(rows)
+            metrics.BATCH_ROWS.observe(len(rows))
             metrics.ROWS_WRITTEN.inc(len(rows))
             metrics.LAST_WRITE.set(time.time())
             metrics.DB_UP.set(1)
         except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             log.warning("écriture impossible (%s) : %d lignes mises en tampon disque", e, len(rows))
             metrics.DB_UP.set(0)
+            metrics.WRITE_ERRORS.inc()
+            metrics.ROWS_SPOOLED.inc(len(rows))
             self.spool.save(rows)
             await self._reset_pool()
 
@@ -114,7 +119,10 @@ class Writer:
             metrics.SPOOL_FILES.set(len(files))
             for path in files:
                 try:
-                    await self._copy(Spool.load(path))
+                    rows = Spool.load(path)
+                    await self._copy(rows)
+                    metrics.ROWS_REPLAYED.inc(len(rows))
+                    metrics.ROWS_WRITTEN.inc(len(rows))
                 except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError):
                     await self._reset_pool()
                     break

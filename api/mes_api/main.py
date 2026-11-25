@@ -9,7 +9,7 @@ import os
 from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
-from . import auth, db, typedefs, workers
+from . import auth, db, metrics, typedefs, workers
 from .config import settings
 from .routes_catalog import router as catalog_router
 from .routes_mes import router as mes_router
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MES v3", version=os.environ.get("MES_VERSION", "dev"), lifespan=lifespan,
               docs_url="/api/docs", openapi_url="/api/openapi.json")
+metrics.install(app)
 app.include_router(catalog_router)
 app.include_router(mes_router)
 app.include_router(recipes_router)

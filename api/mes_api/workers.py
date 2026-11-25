@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import db
+from . import db, metrics
 from .config import settings
 
 log = logging.getLogger("workers")
@@ -230,13 +231,18 @@ async def purge(conn) -> None:
 
 async def loop_every(seconds: float, fn, name: str) -> None:
     while True:
+        t0 = _time.perf_counter()
         try:
             async with db.pool().acquire() as conn:
                 await fn(conn)
+            metrics.TASK_LAST.labels(name).set(_time.time())
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
+            metrics.TASK_ERRORS.labels(name).inc()
             log.exception("tâche %s en erreur", name)
+        finally:
+            metrics.TASK_SECONDS.labels(name).observe(_time.perf_counter() - t0)
         await asyncio.sleep(seconds)
 
 

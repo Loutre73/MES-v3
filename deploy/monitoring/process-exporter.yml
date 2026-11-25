@@ -1,0 +1,5 @@
+# Regroupement des processus de l'hôte par nom de commande (tableau « Processus »).
+process_names:
+  - name: "{{.Comm}}"
+    cmdline:
+      - ".+"

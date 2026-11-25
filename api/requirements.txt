@@ -5,3 +5,4 @@ asyncua==2.1.0
 PyYAML==6.0.4
 python-multipart==0.0.34
 ldap3==2.9.1
+prometheus_client==0.26.0

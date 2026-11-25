@@ -52,6 +52,7 @@ class Collector:
     # --- notifications OPC UA -------------------------------------------------------------
     def datachange_notification(self, node, val, data) -> None:
         metrics.NOTIFICATIONS.inc()
+        metrics.LAST_NOTIFICATION.set(time.time())
         tag_id = self.by_node.get(node.nodeid)
         if tag_id is None:
             return
@@ -122,6 +123,7 @@ class Collector:
                     for t, h in [(t, h) for t, h in zip(chunk, handles) if not isinstance(h, int)]:
                         log.warning("abonnement refusé pour %s : %s", self.tags[t].name, h)
         metrics.TAGS.set(len(self.handles))
+        metrics.SUBSCRIPTIONS.set(len(self.subs))
         log.info("%d tags surveillés dans %d abonnements", len(self.handles), len(self.subs))
 
     async def unsubscribe(self, tag_ids: list[int]) -> None:
@@ -194,6 +196,7 @@ class Collector:
         try:
             async with client:
                 metrics.OPC_UP.set(1)
+                metrics.SESSIONS.inc()
                 log.info("connecté à %s", cfg.endpoint)
                 conn = await asyncpg.connect(cfg.database_url)
                 try:
@@ -208,6 +211,7 @@ class Collector:
                 self.subs.clear()
                 t0 = time.monotonic()
                 await self.subscribe(client, list(self.tags))
+                metrics.SUBSCRIBE_SECONDS.set(time.monotonic() - t0)
                 log.info("abonnements créés en %.1f s", time.monotonic() - t0)
                 tasks = [asyncio.create_task(self.catalog_loop(client, fp)),
                          asyncio.create_task(self.keepalive_loop())]
@@ -220,6 +224,7 @@ class Collector:
                         t.cancel()
         finally:
             metrics.OPC_UP.set(0)
+            metrics.SUBSCRIPTIONS.set(0)
 
     async def run(self) -> None:
         start_http_server(self.cfg.metrics_port)
@@ -230,6 +235,7 @@ class Collector:
                 await self.session()
                 delay = 2
             except Exception as e:  # noqa: BLE001
+                metrics.SESSION_ERRORS.inc()
                 log.error("session interrompue : %s ; reconnexion dans %d s", e, delay)
                 self.mark_bad()
             await asyncio.sleep(delay)
