@@ -3,7 +3,7 @@
 # Usage : ./mesctl <commande> [arguments]   (./mesctl help pour la liste)
 set -euo pipefail
 
-cd "$(dirname "$(readlink -f "$0")")"
+cd "$(cd "$(dirname "$0")" && pwd -P)"   # portable Linux et macOS
 ENV_FILE=site.env
 STATE_DIR=.mesctl
 mkdir -p "$STATE_DIR"
@@ -14,7 +14,12 @@ fail() { printf '\033[31mErreur : %s\033[0m\n' "$*" >&2; exit 1; }
 compose() { docker compose --env-file "$ENV_FILE" -f docker-compose.yml "$@"; }
 env_get() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2-; }
 env_set() {
-  if grep -qE "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; else echo "$1=$2" >> "$ENV_FILE"; fi
+  # sans sed -i, dont la syntaxe diffère entre Linux et macOS
+  if grep -qE "^$1=" "$ENV_FILE"; then
+    awk -v k="$1" -v v="$2" 'index($0, k "=") == 1 { print k "=" v; next } { print }' "$ENV_FILE" > "$ENV_FILE.tmp" && cat "$ENV_FILE.tmp" > "$ENV_FILE" && rm -f "$ENV_FILE.tmp"
+  else
+    echo "$1=$2" >> "$ENV_FILE"
+  fi
 }
 secret() { head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24; }
 
@@ -100,7 +105,7 @@ cmd_backup() {
   say "Sauvegarde vers $file"
   compose exec -T db pg_dump -U mes -d mes -Fc 2>/dev/null > "$file" || fail "échec de la sauvegarde"
   # rotation : on garde les $keep plus récentes
-  ls -1t "$dir"/mes-*.dump 2>/dev/null | tail -n +"$((keep + 1))" | xargs -r rm -f
+  ls -1t "$dir"/mes-*.dump 2>/dev/null | tail -n +"$((keep + 1))" | while IFS= read -r f; do rm -f "$f"; done
   echo "$file"
 }
 
