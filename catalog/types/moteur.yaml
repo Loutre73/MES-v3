@@ -1,0 +1,17 @@
+type: moteur
+version: 1
+libelle: Moteur asynchrone
+# Membres obligatoires pour reconnaître une instance dans l'automate
+signature:
+  - { path: Courant, datatype: Real }
+  - { path: Marche, datatype: Bool }
+  - { path: Defaut, datatype: Bool }
+membres:
+  - { path: Courant, unite: A, role: courant_moteur, deadband: { type: absolu, valeur: 0.1 } }
+  - { path: Vitesse, unite: tr/min, deadband: { type: absolu, valeur: 2 }, optionnel: true }
+  - { path: Marche, role: etat_marche }
+  - { path: Defaut, role: alarme, alarme: { priorite: haute, message: "Défaut moteur" } }
+  - { path: Heures, unite: h, role: compteur_heures, optionnel: true }
+attributs:
+  - { nom: courant_nominal, unite: A, obligatoire: true }
+  - { nom: puissance_kw, unite: kW }

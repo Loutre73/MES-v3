@@ -1,0 +1,15 @@
+type: ligne
+version: 1
+libelle: Ligne de production
+# Les arrêts de ce type sont détectés, qualifiés et comptés dans le TRS
+suivi_arrets: true
+signature:
+  - { path: Marche, datatype: Bool }
+  - { path: Tonnage_t, datatype: LReal }
+membres:
+  - { path: Marche, role: etat_marche }
+  - { path: Tonnage_t, unite: t, role: compteur_tonnage, deadband: { type: absolu, valeur: 0.01 } }
+  - { path: Debit_th, unite: t/h, role: debit, deadband: { type: pourcent, valeur: 1 }, optionnel: true }
+  - { path: Code_arret, role: code_arret, optionnel: true }
+attributs:
+  - { nom: cadence_nominale_th, unite: t/h, obligatoire: true }

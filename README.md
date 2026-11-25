@@ -4,18 +4,35 @@ MES standard pour automates Siemens S7-1500 en OPC UA : historian à 1 s sur cha
 
 Documents de conception : [comparaison des architectures](https://claude.ai/artifact/KLxPmR3DEiuxjA5J1ddfvc) · [architecture détaillée](https://claude.ai/artifact/KyNtLLU61mcpawd3Cti1yq)
 
-## État : lot 0, socle technique
+## Contenu
+
+Application web en français (une seule adresse, comptes Active Directory ou locaux) :
+
+| Écran | Ce qu'on y fait |
+| --- | --- |
+| Tableau de bord | État de chaque ligne, poste en cours, tonnage vs objectif, TRS, kWh/t, compteurs d'alarmes, d'arrêts à qualifier et de moteurs en dérive |
+| Arrêts | Arrêts détectés automatiquement (signal de marche, code d'arrêt automate), qualification par cause, découpe d'un arrêt en deux, Pareto |
+| Postes | Postes générés automatiquement (3×8 par défaut), objectif de tonnage, équipe, arrêts planifiés |
+| Alarmes | Alarmes en cours et historique, acquittement, recherche |
+| Moteurs | Vue des 100 moteurs colorée par dérive de courant, courbes, recalage de la référence après intervention |
+| Énergie | Puissance appelée, consommation par compteur, kWh/t par poste et par ligne |
+| Recettes | Création, duplication, versions avec validation, recherche (y compris par valeur de paramètre), comparaison avec la production en cours, chargement dans l'automate avec accusé de réception |
+| Analyse | Tableaux Grafana intégrés (performance, énergie, tendances historian, santé de la collecte), sans second mot de passe |
+| Catalogue | Découverte automatique des machines de l'automate, attributs, import/export CSV des machines et des tags |
+| Paramètres, Utilisateurs | Seuils, rôles, comptes locaux, journal des actions |
+
+Rôles : opérateur, chef d'équipe, maintenance, administrateur. Avec l'AD, le rôle vient des groupes (`AUTH_LDAP_GROUP_ROLES`).
 
 | Service | Rôle |
 | --- | --- |
+| `web` | Point d'entrée unique (nginx) : application, API sous `/api`, Grafana sous `/grafana` |
+| `api` | API FastAPI, moteur d'événements (arrêts, alarmes), calculs périodiques (postes, KPI, énergie, dérives) |
 | `db` | PostgreSQL 16 + TimescaleDB : historian, catalogue, données MES |
 | `migrate` | Applique les migrations SQL (`db/migrations`) et les durées de conservation, à chaque démarrage |
 | `collector` | Client OPC UA : abonnements à 1 s, deadband par tag, écriture par lots, tampon disque, rechargement du catalogue à chaud |
 | `grafana` | Tableaux de bord livrés en fichiers (`grafana/dashboards`) |
-| `simulator` | Simulateur S7-1500 (profil `sim`) : 10 000 tags répartis en DB de moteurs, compteurs, lignes et mesures |
+| `simulator` | Simulateur S7-1500 (profil `sim`) : 10 000 tags (moteurs, compteurs, lignes, mesures) et DB de recette |
 | `prometheus` | Surveillance du collecteur (profil `monitoring`) |
-
-Ce qui arrive ensuite : catalogue par types de machines et découverte automatique (lot 1), arrêts et shifts (lot 2), alarmes (lot 3), dérives moteurs (lot 4), recettes (lot 5), énergie et performance (lot 6).
 
 ## Démarrage rapide (démonstration avec simulateur)
 
@@ -23,22 +40,26 @@ Prérequis : Linux, Docker et Docker Compose v2.
 
 ```bash
 cd deploy
-./mesctl install --demo     # construit les images, démarre la pile et le simulateur
+./mesctl install --demo     # construit les images, démarre la pile, le simulateur et la découverte
 ./mesctl status             # tags actifs, points/s, retard de collecte, taille de l'historian
 ```
 
-Grafana répond sur le port 3000 (utilisateur `admin`, mot de passe dans `deploy/site.env`). Deux tableaux de bord : **Collecte - santé** et **Historian - tendances**.
+L'application répond sur le port 80 (`WEB_PORT`). Compte de secours : `admin`, mot de passe `ADMIN_PASSWORD` dans `deploy/site.env` (affiché en fin d'installation).
 
 ## Installation sur un site
 
 ```bash
 cd deploy
-./mesctl install            # crée site.env avec des mots de passe générés
-# renseigner OPCUA_ENDPOINT, la sécurité OPC UA et BROWSE_ROOT dans site.env
+./mesctl install            # crée site.env avec des secrets générés
+# renseigner OPCUA_ENDPOINT, la sécurité OPC UA, BROWSE_ROOT et AUTH_LDAP_* dans site.env
 ./mesctl install            # récupère les images de MES_VERSION et démarre
 ```
 
-Au premier démarrage, le collecteur parcourt l'automate sous `BROWSE_ROOT` (par défaut `PLC_1/DataBlocksGlobal`) et crée un tag par variable numérique ou booléenne. Les deadbands se règlent dans `catalog.tag` (`deadband_kind` = `none`, `absolute` ou `percent`) et sont prises en compte sans redémarrage.
+Ensuite, dans **Catalogue > Découverte** (ou `./mesctl discover`) : le MES parcourt l'automate sous `BROWSE_ROOT`, reconnaît les instances d'après les types de `catalog/types/*.yaml` (signature de membres), et crée machines, tags, unités, deadbands, rôles et alarmes. Les structures inconnues peuvent être importées en tags bruts. Les attributs propres au site (cadence nominale des lignes, ligne d'un compteur, courant nominal d'un moteur) se saisissent dans **Catalogue > Machines** ou par import CSV. La collecte prend tout changement en compte sans redémarrage.
+
+Captures d'écran sur le simulateur : [docs/captures](docs/captures).
+
+Recettes : le bloc à créer dans l'automate est décrit dans [docs/automate-recettes.md](docs/automate-recettes.md).
 
 Pour un site sans Internet : `./mesctl package 0.1.0` sur un poste connecté, copier l'archive, puis `./mesctl update 0.1.0 --offline mes-images-0.1.0.tar`.
 
@@ -50,7 +71,7 @@ Pour un site sans Internet : `./mesctl package 0.1.0` sur un poste connecté, co
 ./mesctl backup             # sauvegarde complète (rotation selon BACKUP_KEEP)
 ```
 
-Le collecteur redémarre en dernier. Pendant une coupure de la base, il garde les valeurs dans son tampon disque (`/spool`) et les réécrit dès que la base répond.
+Les nouveaux paramètres d'une version sont ajoutés automatiquement à `site.env`. Le collecteur redémarre en dernier. Pendant une coupure de la base, il garde les valeurs dans son tampon disque (`/spool`) et les réécrit dès que la base répond.
 
 Les versions sont publiées par la CI : un tag Git `v0.2.0` construit et pousse `ghcr.io/loutre73/mes-*:0.2.0`.
 
@@ -74,12 +95,16 @@ Résultats du lot 0 : [tests/results/charge-lot0-simulateur.md](tests/results/ch
 ## Arborescence
 
 ```
+api/            API et traitements MES (Python, FastAPI) et leurs tests
+catalog/        types de machines et types de recettes (YAML), livrés avec chaque version
 collector/      collecteur OPC UA (Python, asyncua) et ses tests
 db/             migrations SQL et outil migrate
 deploy/         docker-compose.yml, site.env.example, mesctl, configuration de surveillance
 grafana/        sources de données et tableaux de bord provisionnés
 simulator/      simulateur S7-1500 et configurations de sites
+docs/           documentation d'intégration automate
 tests/          test de charge et résultats
+web/            interface (Preact + htm, sans compilation) et configuration nginx
 ```
 
 ## Développement derrière un proxy d'entreprise

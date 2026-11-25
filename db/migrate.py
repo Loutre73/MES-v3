@@ -20,6 +20,10 @@ async def connect(dsn: str, attempts: int = 60) -> asyncpg.Connection:
     for i in range(attempts):
         try:
             return await asyncpg.connect(dsn)
+        except asyncpg.InvalidPasswordError:
+            # inutile d'attendre : site.env ne correspond pas à la base existante
+            log.error("mot de passe refusé par la base : DB_PASSWORD de site.env ne correspond pas au volume de données")
+            raise
         except (OSError, asyncpg.CannotConnectNowError, asyncpg.PostgresError) as e:
             log.info("base indisponible (%s), nouvel essai dans 2 s", e)
             await asyncio.sleep(2)

@@ -10,3 +10,13 @@ dbs:
   - { name: DB_Energie, struct: compteur_energie, prefix: C, start: 201, count: 20 }
   - { name: DB_Lignes, struct: ligne, prefix: L, start: 1, count: 5 }
   - { name: DB_Process, struct: mesure, prefix: P, start: 1, count: 0, fill: true, change_ratio: 0.3 }
+# DB de recette (même structure que catalog/recipes/ligne.yaml). max_automate : contrôle simulé côté automate.
+recettes:
+  - db: DB_Recette_Ligne
+    parametres:
+      - { nom: Vitesse_convoyeur, datatype: Real, defaut: 60, max_automate: 95 }
+      - { nom: Debit_cible, datatype: Real, defaut: 150 }
+      - { nom: Temperature, datatype: Real, defaut: 80 }
+      - { nom: Temps_malaxage, datatype: DInt, defaut: 120 }
+      - { nom: Humidite_max, datatype: Real, defaut: 8 }
+      - { nom: Ouverture_trappe, datatype: Real, defaut: 50 }

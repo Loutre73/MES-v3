@@ -79,9 +79,13 @@ class Collector:
         cfg = self.cfg
         # regroupement par deadband absolue : un filtre serveur par groupe
         groups: dict[float, list[int]] = defaultdict(list)
+        # Compteurs (énergie, tonnage) : filtrage côté collecteur seulement. Ils avancent par petits pas ;
+        # certains serveurs comparent la deadband à l'échantillon précédent et non à la dernière valeur
+        # transmise, et ne remonteraient alors jamais un compteur lent.
         for t in tag_ids:
-            db = self.tags[t].deadband
-            groups[db.value if (cfg.server_deadband and db.kind == "absolute") else 0.0].append(t)
+            tag = self.tags[t]
+            server = cfg.server_deadband and tag.deadband.kind == "absolute" and not (tag.role or "").startswith("compteur")
+            groups[tag.deadband.value if server else 0.0].append(t)
         for deadband, ids in groups.items():
             for i in range(0, len(ids), cfg.items_per_subscription):
                 chunk = ids[i:i + cfg.items_per_subscription]

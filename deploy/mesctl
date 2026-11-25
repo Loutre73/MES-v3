@@ -18,6 +18,17 @@ env_set() {
 }
 secret() { head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24; }
 
+complete_env() {
+  # Ajoute à site.env les paramètres apparus dans une nouvelle version, et génère les secrets <auto>
+  local line k v
+  while IFS= read -r line; do
+    [[ "$line" =~ ^([A-Z_0-9]+)=(.*)$ ]] || continue
+    k=${BASH_REMATCH[1]}; v=${BASH_REMATCH[2]}
+    grep -qE "^$k=" "$ENV_FILE" || { echo "$k=$v" >> "$ENV_FILE"; say "site.env : $k ajouté"; }
+  done < site.env.example
+  for k in $(grep -E '=<auto>$' "$ENV_FILE" | cut -d= -f1); do env_set "$k" "$(secret)"; done
+}
+
 require_docker() {
   command -v docker >/dev/null || fail "Docker n'est pas installé."
   docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 est requis."
@@ -29,7 +40,9 @@ get_images() {
   # Images de la version : en ligne depuis le registre, ou construites localement pour MES_VERSION=dev
   if [ "$(env_get MES_VERSION)" = "dev" ]; then
     local reg; reg=$(env_get MES_REGISTRY); reg=${reg:-ghcr.io/loutre73}
-    docker image inspect "$reg/mes-collector:dev" >/dev/null 2>&1 || compose --profile sim build
+    for i in collector api web migrate; do
+      docker image inspect "$reg/mes-$i:dev" >/dev/null 2>&1 || { compose --profile sim build; break; }
+    done
   else
     compose pull --quiet
   fi
@@ -38,7 +51,7 @@ get_images() {
 wait_healthy() {
   say "Contrôle de santé..."
   for _ in $(seq 1 60); do
-    if compose ps --format '{{.Service}} {{.State}}' | grep -E '^(db|collector|grafana) ' | grep -vq running; then
+    if compose ps --format '{{.Service}} {{.State}} {{.Health}}' | grep -E '^(db|collector|grafana|api|web) ' | grep -Evq 'running( healthy)? *$'; then
       sleep 2
     else
       compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
@@ -53,7 +66,7 @@ cmd_install() {
   require_docker
   if [ ! -f "$ENV_FILE" ]; then
     cp site.env.example "$ENV_FILE"
-    for k in DB_PASSWORD MES_READER_PASSWORD GRAFANA_ADMIN_PASSWORD; do env_set "$k" "$(secret)"; done
+    complete_env
     chmod 600 "$ENV_FILE"
     say "site.env créé avec des mots de passe générés."
     if [ "${1:-}" = "--demo" ]; then
@@ -67,11 +80,15 @@ cmd_install() {
       exit 0
     fi
   fi
+  complete_env
   mkdir -p "$(env_get OPCUA_CERT_DIR || echo ./certs)" "$(env_get BACKUP_DIR || echo ./backups)"
   get_images
   compose up -d
   wait_healthy
-  say "MES v3 $(env_get MES_VERSION) installé. Grafana : http://$(hostname -f 2>/dev/null || hostname):$(env_get GRAFANA_PORT)"
+  if [ "${1:-}" = "--demo" ]; then cmd_discover --demo; fi
+  local port; port=$(env_get WEB_PORT); port=${port:-80}
+  say "MES v3 $(env_get MES_VERSION) installé : http://$(hostname -f 2>/dev/null || hostname)$([ "$port" = 80 ] || echo ":$port")/"
+  say "Compte de secours : admin / $(env_get ADMIN_PASSWORD)   (les comptes AD se connectent directement si AUTH_LDAP_URL est renseigné)"
 }
 
 cmd_backup() {
@@ -108,6 +125,7 @@ load_offline() {
 
 cmd_update() {
   require_docker; require_env
+  complete_env
   local target=${1:-} offline=""
   [ -n "$target" ] || fail "usage : ./mesctl update <version> [--offline archive.tar]"
   [ "${2:-}" = "--offline" ] && offline=${3:-}
@@ -121,7 +139,7 @@ cmd_update() {
   # migrations d'abord, collecteur en dernier : son tampon disque couvre la coupure
   compose up -d db
   compose up migrate --exit-code-from migrate || { say "Échec des migrations : retour arrière."; cmd_rollback; exit 1; }
-  compose up -d grafana
+  compose up -d grafana api web
   compose up -d collector
   compose up -d
   wait_healthy
@@ -152,11 +170,17 @@ cmd_status() {
   df -h . | tail -1 | awk '{print "disque libre : " $4 " (" $5 " utilisés)"}'
 }
 
+cmd_discover() {
+  # Découverte automatique et ajout de toutes les instances complètes (équivalent de l'écran Catalogue)
+  require_env
+  compose exec -T api python -m mes_api.cli decouvrir "$@"
+}
+
 cmd_package() {
   # Construit l'archive hors ligne d'une version (sur le poste de build, pas sur site)
   local v=${1:-}; [ -n "$v" ] || fail "usage : ./mesctl package <version>"
   local reg; reg=$(env_get MES_REGISTRY 2>/dev/null || echo ghcr.io/loutre73); reg=${reg:-ghcr.io/loutre73}
-  local images="$reg/mes-collector:$v $reg/mes-migrate:$v $reg/mes-simulator:$v timescale/timescaledb:2.17.2-pg16 grafana/grafana-oss:11.3.0"
+  local images="$reg/mes-collector:$v $reg/mes-migrate:$v $reg/mes-api:$v $reg/mes-web:$v $reg/mes-simulator:$v timescale/timescaledb:2.17.2-pg16 grafana/grafana-oss:11.3.0"
   for i in $images; do docker image inspect "$i" >/dev/null 2>&1 || docker pull "$i"; done
   docker save -o "mes-images-$v.tar" $images
   say "Archive créée : mes-images-$v.tar"
@@ -173,6 +197,7 @@ case "${1:-help}" in
   stop)     compose stop ;;
   start)    compose up -d; wait_healthy ;;
   package)  shift; cmd_package "$@" ;;
+  discover) shift; cmd_discover "$@" ;;
   *) cat <<'EOF'
 mesctl - exploitation du MES v3
 
@@ -182,6 +207,7 @@ mesctl - exploitation du MES v3
   rollback                   revient à la version précédente et restaure la sauvegarde d'avant mise à jour
   backup                     sauvegarde complète de la base (rotation BACKUP_KEEP)
   restore <fichier.dump>     restaure une sauvegarde
+  discover [--demo]          découverte automatique des machines de l'automate et ajout au catalogue
   status                     version, services, débit et retard de collecte, disque
   logs [service]             journaux
   start | stop               démarre ou arrête la pile
