@@ -89,7 +89,8 @@ function Chart({ series, height = 220, yLabel = "", bands = [] }) {
     ${xt.map((t, i) => html`<text x=${X(t)} y=${H - 6} text-anchor=${["start", "middle", "end"][i]}>${dt(t)}</text>`)}
     ${bands.map(b => html`<line x1=${P.l} x2=${W - P.r} y1=${Y(b.y)} y2=${Y(b.y)} stroke=${b.color} stroke-dasharray="4 4" />`)}
     ${series.map(s => html`<polyline fill="none" stroke=${s.color || "var(--accent)"} stroke-width="2" vector-effect="non-scaling-stroke"
-        points=${s.points.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ")} />`)}
+        points=${s.points.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ")} />
+      ${s.points.length < 60 && s.points.map(p => html`<circle cx=${X(p[0])} cy=${Y(p[1])} r="3.5" fill=${s.color || "var(--accent)"} />`)}`)}
     ${yLabel && html`<text x=${P.l} y=${P.t + 10}>${yLabel}</text>`}
   </svg>`;
 }

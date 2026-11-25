@@ -70,7 +70,9 @@ class EventEngine:
         self.last_reload = asyncio.get_running_loop().time()
 
     async def _open_stop(self, conn, mid: int, at: datetime) -> None:
-        exists = await conn.fetchval("SELECT 1 FROM mes.stop_event WHERE machine_id = $1 AND ends_at IS NULL", mid)
+        # idempotent : après un redémarrage, le moteur relit les dernières minutes de l'historian
+        exists = await conn.fetchval(
+            "SELECT 1 FROM mes.stop_event WHERE machine_id = $1 AND (ends_at IS NULL OR starts_at = $2)", mid, at)
         if exists:
             return
         planned = await conn.fetchval(
@@ -139,7 +141,9 @@ class EventEngine:
                     continue
                 self.alarm_state[d["id"]] = act
                 if act:
-                    await conn.execute("INSERT INTO mes.alarm_event (def_id, raised_at, value) VALUES ($1, $2, $3)", d["id"], t, v)
+                    await conn.execute(
+                        """INSERT INTO mes.alarm_event (def_id, raised_at, value) SELECT $1, $2, $3
+                           WHERE NOT EXISTS (SELECT 1 FROM mes.alarm_event WHERE def_id = $1 AND raised_at = $2)""", d["id"], t, v)
                 else:
                     await conn.execute(
                         "UPDATE mes.alarm_event SET cleared_at = $2 WHERE def_id = $1 AND cleared_at IS NULL", d["id"], t)

@@ -57,6 +57,8 @@ cd deploy
 
 Ensuite, dans **Catalogue > Découverte** (ou `./mesctl discover`) : le MES parcourt l'automate sous `BROWSE_ROOT`, reconnaît les instances d'après les types de `catalog/types/*.yaml` (signature de membres), et crée machines, tags, unités, deadbands, rôles et alarmes. Les structures inconnues peuvent être importées en tags bruts. Les attributs propres au site (cadence nominale des lignes, ligne d'un compteur, courant nominal d'un moteur) se saisissent dans **Catalogue > Machines** ou par import CSV. La collecte prend tout changement en compte sans redémarrage.
 
+Captures d'écran sur le simulateur : [docs/captures](docs/captures).
+
 Recettes : le bloc à créer dans l'automate est décrit dans [docs/automate-recettes.md](docs/automate-recettes.md).
 
 Pour un site sans Internet : `./mesctl package 0.1.0` sur un poste connecté, copier l'archive, puis `./mesctl update 0.1.0 --offline mes-images-0.1.0.tar`.
