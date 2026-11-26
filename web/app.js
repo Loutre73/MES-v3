@@ -7,6 +7,7 @@ import {
 import { Synthese } from "./synthese.js";
 import { Ligne } from "./ligne.js";
 import { Planning } from "./planning.js";
+import { Recettes } from "./recettes.js";
 import "./touch.js";
 
 // ----------------------------------------------------------------------------- connexion
@@ -231,151 +232,6 @@ function Energy() {
       ${!data.par_compteur.length && html`<span class="muted">Aucun compteur.</span>`}</div>`;
 }
 
-// ----------------------------------------------------------------------------- recettes
-function Recipes({ user, route }) {
-  const id = route[1];
-  if (id === "nouvelle") return html`<${RecipeNew} />`;
-  if (id) return html`<${RecipeDetail} id=${+id} user=${user} />`;
-  return html`<${RecipeList} user=${user} />`;
-}
-
-function RecipeList({ user }) {
-  const types = useApi("/recettes/types");
-  const [f, setF] = useState({ q: "", type_id: "", statut: "", archivees: false, param: "", op: ">", valeur: "" });
-  const qs = new URLSearchParams({ q: f.q, archivees: f.archivees });
-  if (f.type_id) qs.set("type_id", f.type_id);
-  if (f.statut) qs.set("statut", f.statut);
-  if (f.param && f.valeur !== "") { qs.set("param", f.param); qs.set("op", f.op); qs.set("valeur", f.valeur); }
-  const list = useApi(`/recettes?${qs}`);
-  const params = (types.data || []).flatMap(t => t.definition.params.map(p => ({ ...p, type: t.label })));
-  return html`<div class="row"><h1>Recettes</h1><span class="spacer"></span>
-      ${can(user, "chef_equipe") && html`<a class="btn primary" href="#/recettes/nouvelle">Nouvelle recette</a>`}</div>
-    <div class="panel row" style="margin-bottom:12px;align-items:end">
-      <label class="f" style="flex:1">Recherche<input placeholder="Code, libellé, produit…" value=${f.q} onInput=${e => setF({ ...f, q: e.target.value })} /></label>
-      <label class="f">Type<select value=${f.type_id} onChange=${e => setF({ ...f, type_id: e.target.value })}><option value="">Tous</option>${(types.data || []).map(t => html`<option value=${t.id}>${t.label}</option>`)}</select></label>
-      <label class="f">Statut<select value=${f.statut} onChange=${e => setF({ ...f, statut: e.target.value })}><option value="">Tous</option><option value="brouillon">Brouillon</option><option value="validee">Validée</option></select></label>
-      <label class="f">Paramètre<select value=${f.param} onChange=${e => setF({ ...f, param: e.target.value })}><option value="">—</option>${params.map(p => html`<option value=${p.name}>${p.label}</option>`)}</select></label>
-      <select value=${f.op} onChange=${e => setF({ ...f, op: e.target.value })}>${[">", ">=", "=", "<=", "<"].map(o => html`<option>${o}</option>`)}</select>
-      <input class="small" type="number" value=${f.valeur} onInput=${e => setF({ ...f, valeur: e.target.value })} />
-      <label class="row"><input type="checkbox" checked=${f.archivees} onChange=${e => setF({ ...f, archivees: e.target.checked })} /> archivées</label>
-    </div>
-    <${Msg} error=${list.error} />
-    <div class="table-wrap"><table><thead><tr><th>Code</th><th>Libellé</th><th>Produit</th><th>Type</th><th>Version</th><th>Statut</th><th>Dernier chargement</th></tr></thead>
-      <tbody>${(list.data || []).map(r => html`<tr style="cursor:pointer" onClick=${() => (location.hash = `#/recettes/${r.id}`)}>
-        <td><a href=${`#/recettes/${r.id}`}>${r.code}</a></td><td>${r.label}</td><td>${r.product}</td><td>${r.type}</td><td>v${r.version}</td>
-        <td><${Status} s=${r.status} archived=${r.archived} /></td><td>${dt(r.dernier_chargement)}</td></tr>`)}</tbody></table></div>
-    ${list.data && !list.data.length && html`<p class="muted">Aucune recette ne correspond.</p>`}`;
-}
-
-const Status = ({ s, archived }) => archived ? html`<span class="badge idle">archivée</span>` :
-  s === "validee" ? html`<span class="badge good">validée</span>` : html`<span class="badge warn">brouillon</span>`;
-
-function ParamTable({ tdef, values, edit, onChange, compare }) {
-  return html`<div class="table-wrap"><table><thead><tr><th>Paramètre</th><th class="num">Valeur</th><th>Unité</th><th class="num">Min</th><th class="num">Max</th>
-      ${compare && html`<th class="num">${compare.comparee}</th>`}</tr></thead>
-    <tbody>${tdef.params.map(p => {
-      const c = compare && compare.lignes.find(l => l.param === p.name);
-      const v = values[p.name];
-      const out = v !== "" && v !== undefined && ((p.min !== undefined && p.min !== null && +v < p.min) || (p.max !== undefined && p.max !== null && +v > p.max));
-      return html`<tr class=${c && c.ecart ? "diff" : ""}>
-        <td>${p.label}<div class="muted" style="font-size:12px">${p.name}</div></td>
-        <td class="num">${edit ? html`<input class="small" type="number" step="any" style=${out ? "border-color:var(--red)" : ""} value=${v ?? ""} onInput=${e => onChange({ ...values, [p.name]: e.target.value })} />` : num(v, p.datatype.startsWith("Int") ? 0 : 2)}</td>
-        <td>${p.unit || ""}</td><td class="num">${p.min ?? ""}</td><td class="num">${p.max ?? ""}</td>
-        ${compare && html`<td class="num">${c ? num(c.b, 2) : ""}${c && c.ecart ? html` <span class="badge warn">écart</span>` : ""}</td>`}</tr>`;
-    })}</tbody></table></div>`;
-}
-
-function RecipeNew() {
-  const types = useApi("/recettes/types");
-  const [f, setF] = useState({ type_id: "", code: "", label: "", product: "" });
-  const [values, setValues] = useState({});
-  const a = useAction();
-  const t = (types.data || []).find(x => x.id === +f.type_id);
-  useEffect(() => { if (t) setValues(Object.fromEntries(t.definition.params.map(p => [p.name, p.default]))); }, [f.type_id]);
-  useEffect(() => { if (types.data && types.data.length === 1 && !f.type_id) setF({ ...f, type_id: String(types.data[0].id) }); }, [types.data]);
-  const save = async () => {
-    const r = await a.run(() => api("/recettes", { method: "POST", body: { ...f, type_id: +f.type_id, values } }));
-    if (r) location.hash = `#/recettes/${r.id}`;
-  };
-  return html`<p><a href="#/recettes">← Recettes</a></p><h1>Nouvelle recette</h1><${Msg} ...${a.msg} />
-    <div class="panel row" style="margin-bottom:12px;align-items:end">
-      <label class="f">Type<select value=${f.type_id} onChange=${e => setF({ ...f, type_id: e.target.value })}><option value="">Choisir…</option>${(types.data || []).map(t => html`<option value=${t.id}>${t.label}</option>`)}</select></label>
-      <label class="f">Code<input value=${f.code} onInput=${e => setF({ ...f, code: e.target.value })} /></label>
-      <label class="f" style="flex:1">Libellé<input value=${f.label} onInput=${e => setF({ ...f, label: e.target.value })} /></label>
-      <label class="f">Produit<input value=${f.product} onInput=${e => setF({ ...f, product: e.target.value })} /></label></div>
-    ${t && html`<${ParamTable} tdef=${t.definition} values=${values} edit=${true} onChange=${setValues} />`}
-    <div class="row" style="margin-top:12px"><span class="spacer"></span><button class="primary" disabled=${!t || !f.code || !f.label || a.busy} onClick=${save}>Créer (brouillon v1)</button></div>`;
-}
-
-function RecipeDetail({ id, user }) {
-  const r = useApi(`/recettes/${id}`);
-  const [vid, setVid] = useState(null);
-  const [edit, setEdit] = useState(null), [comment, setComment] = useState("");
-  const [cmp, setCmp] = useState(null), [cmpWith, setCmpWith] = useState("production");
-  const [dup, setDup] = useState(null);
-  const [load, setLoad] = useState(null);
-  const a = useAction();
-  const chef = can(user, "chef_equipe");
-  useEffect(() => { if (r.data && !vid) setVid(r.data.versions[0].id); }, [r.data]);
-  useEffect(() => {  // suivi du chargement automate
-    if (!load || load.result !== "en_cours") return;
-    const t = setTimeout(() => api(`/recettes/chargements/${load.id}`).then(x => { setLoad(x); if (x.result !== "en_cours") r.reload(); }), 700);
-    return () => clearTimeout(t);
-  }, [load]);
-  if (r.error) return html`<${Msg} error=${r.error} />`;
-  if (!r.data || !vid) return html`<p class="muted">Chargement…</p>`;
-  const rec = r.data, tdef = rec.type.definition;
-  const v = rec.versions.find(x => x.id === vid) || rec.versions[0];
-  const latest = rec.versions[0];
-  const doCompare = async () => setCmp(await a.run(() => api(`/recettes/versions/${v.id}/comparer?avec=${cmpWith}`)) || null);
-  const saveVersion = async () => {
-    const x = await a.run(() => api(`/recettes/${id}/versions`, { method: "POST", body: { values: edit, comment } }), y => `Version ${y.version} créée en brouillon.`);
-    if (x) { setEdit(null); setComment(""); setVid(x.id); r.reload(); }
-  };
-  const LOAD_TXT = { en_cours: ["warn", "Chargement en cours…"], acceptee: ["good", "Acceptée par l'automate"], refusee: ["bad", "Refusée par l'automate"], delai_depasse: ["bad", "Pas de réponse de l'automate"], erreur: ["bad", "Erreur de communication"] };
-  return html`<p><a href="#/recettes">← Recettes</a></p>
-    <div class="row"><h1 style="margin:0">${rec.code} · ${rec.label}</h1><${Status} s=${v.status} archived=${rec.archived} /><span class="spacer"></span>
-      ${chef && html`<button onClick=${() => setDup({ code: rec.code + "-COPIE", label: "" })}>Dupliquer</button>
-        <button onClick=${() => a.run(() => api(`/recettes/${id}/archiver`, { method: "POST" }), rec.archived ? "Recette réactivée." : "Recette archivée.").then(r.reload)}>${rec.archived ? "Désarchiver" : "Archiver"}</button>`}</div>
-    <p class="muted">${rec.type.label}${rec.product ? " · produit " + rec.product : ""} · créée par ${rec.created_by || "?"}</p>
-    <${Msg} ...${a.msg} />
-    <div class="row" style="margin-bottom:12px">
-      <label class="row">Version <select value=${v.id} onChange=${e => { setVid(+e.target.value); setCmp(null); setEdit(null); }}>
-        ${rec.versions.map(x => html`<option value=${x.id}>v${x.version} · ${x.status} · ${dt(x.created_at)}</option>`)}</select></label>
-      <span class="muted">${v.comment || ""} (${v.created_by}${v.validated_by ? `, validée par ${v.validated_by}` : ""})</span>
-      <span class="spacer"></span>
-      ${chef && !edit && html`<button onClick=${() => setEdit({ ...v.values })}>Modifier</button>`}
-      ${chef && v.status === "brouillon" && !edit && html`<button onClick=${() => a.run(() => api(`/recettes/versions/${v.id}/valider`, { method: "POST" }), "Version validée.").then(r.reload)}>Valider</button>`}
-      ${chef && v.status === "validee" && !rec.archived && !edit && html`<button class="primary" disabled=${load && load.result === "en_cours"} onClick=${async () => {
-        const x = await a.run(() => api(`/recettes/versions/${v.id}/charger`, { method: "POST" }));
-        if (x) setLoad({ id: x.id, result: "en_cours" });
-      }}>Charger dans l'automate</button>`}
-    </div>
-    ${load && html`<div class=${LOAD_TXT[load.result][0] === "good" ? "ok" : LOAD_TXT[load.result][0] === "bad" ? "err" : "panel"} style="margin-bottom:12px">
-      ${LOAD_TXT[load.result][1]}${load.plc_code ? ` (code ${load.plc_code})` : ""}${load.details && load.details.motif ? ` : ${load.details.motif}` : ""}${load.details && load.details.erreur ? ` : ${load.details.erreur}` : ""}</div>`}
-    ${!edit && html`<div class="row" style="margin-bottom:12px">
-      <label class="row">Comparer avec <select value=${cmpWith} onChange=${e => setCmpWith(e.target.value)}>
-        <option value="production">la production en cours (automate)</option>
-        ${rec.versions.filter(x => x.id !== v.id).map(x => html`<option value=${x.id}>la version ${x.version}</option>`)}</select></label>
-      <button onClick=${doCompare} disabled=${a.busy}>Comparer</button>
-      ${cmp && html`<span class=${"badge " + (cmp.ecarts ? "warn" : "good")}>${cmp.ecarts ? `${cmp.ecarts} écart(s)` : "identique"}</span><button onClick=${() => setCmp(null)}>Masquer</button>`}</div>`}
-    <${ParamTable} tdef=${tdef} values=${edit || v.values} edit=${!!edit} onChange=${setEdit} compare=${!edit && cmp} />
-    ${edit && html`<div class="row" style="margin-top:12px"><input style="flex:1" placeholder="Motif de la modification" value=${comment} onInput=${e => setComment(e.target.value)} />
-      <button onClick=${() => setEdit(null)}>Annuler</button><button class="primary" disabled=${a.busy} onClick=${saveVersion}>Enregistrer v${latest.version + 1}</button></div>`}
-    <h2>Chargements</h2>
-    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Version</th><th>Par</th><th>Résultat</th><th>Détail</th></tr></thead>
-      <tbody>${rec.chargements.map(l => html`<tr><td>${dt(l.requested_at)}</td><td>v${l.version}</td><td>${l.requested_by}</td>
-        <td><span class=${"badge " + (LOAD_TXT[l.result] || ["idle"])[0]}>${l.result}</span></td><td>${l.plc_code ? "code " + l.plc_code + " " : ""}${(l.details || {}).motif || (l.details || {}).erreur || ""}</td></tr>`)}</tbody></table></div>
-    ${!rec.chargements.length && html`<p class="muted">Jamais chargée.</p>`}
-    ${dup && html`<${Dialog} title="Dupliquer la recette" onClose=${() => setDup(null)}>
-      <div style="display:grid;gap:12px"><label class="f">Nouveau code<input value=${dup.code} onInput=${e => setDup({ ...dup, code: e.target.value })} /></label>
-      <label class="f">Libellé<input value=${dup.label} placeholder=${"Copie de " + rec.label} onInput=${e => setDup({ ...dup, label: e.target.value })} /></label>
-      <div class="row"><span class="spacer"></span><button onClick=${() => setDup(null)}>Annuler</button><button class="primary" onClick=${async () => {
-        const x = await a.run(() => api(`/recettes/${id}/dupliquer`, { method: "POST", body: { code: dup.code, label: dup.label || null } }));
-        setDup(null); if (x) location.hash = `#/recettes/${x.id}`;
-      }}>Dupliquer</button></div></div></${Dialog}>`}`;
-}
-
 // ----------------------------------------------------------------------------- catalogue
 function Catalog({ user }) {
   const [tab, setTab] = useState("decouverte");
@@ -533,7 +389,7 @@ const PAGES = [
   ["alarmes", "Alarmes", Alarms, null, "outils"],
   ["moteurs", "Moteurs", Motors, null, "outils"],
   ["energie", "Énergie", Energy, null, "outils"],
-  ["recettes", "Recettes", Recipes, null, "outils"],
+  ["recettes", "Recettes", Recettes, null, "outils", true],
   ["analyse", "Analyse", Analysis, null, "outils"],
   ["catalogue", "Catalogue", Catalog, ["admin"], "reglages"],
   ["utilisateurs", "Utilisateurs", Users, ["admin"], "reglages"],

@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from mes_api import auth
-from mes_api.routes_recipes import _validate, compare_values
+from mes_api.routes_recipes import _validate, compare_values, delete_plan
 
 TDEF = {"params": [
     {"name": "Vitesse", "label": "Vitesse", "datatype": "Float", "min": 0, "max": 100, "default": 50, "unit": "%"},
@@ -23,6 +23,21 @@ def test_validate_bounds():
 def test_compare_tolerance():
     lines = compare_values(TDEF, {"Vitesse": 50, "Temps": 120}, {"Vitesse": 50.3, "Temps": 130}, 0.5)
     assert [l["ecart"] for l in lines] == [False, True]
+
+
+def test_suppression_recette():
+    vide = {"postes": [], "postes_passes": 0, "chargements": 0}
+    assert delete_plan(vide, False) == "effacer"
+    assert delete_plan({**vide, "chargements": 2}, False) == "masquer"     # historique conservé
+    assert delete_plan({**vide, "postes_passes": 1}, False) == "masquer"
+    a_venir = {**vide, "postes": [{"line": "L1", "en_cours": False}]}
+    with pytest.raises(HTTPException) as e:
+        delete_plan(a_venir, False)
+    assert e.value.status_code == 409
+    assert delete_plan(a_venir, True) == "effacer"
+    with pytest.raises(HTTPException) as e:                               # jamais pendant la production
+        delete_plan({**vide, "postes": [{"line": "L1", "en_cours": True}]}, True)
+    assert "L1" in e.value.detail
 
 
 def test_password_and_token():
