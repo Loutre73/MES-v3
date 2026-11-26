@@ -178,6 +178,9 @@ async def patch_shift(sid: int, body: ShiftPatch, user: User = Depends(require("
         # et le commentaire restent corrigeables pour le calcul des KPI
         if s["ends_at"] <= datetime.now(timezone.utc) and "recipe_id" in changes:
             raise HTTPException(409, "Poste terminé : sa recette n'est plus modifiable")
+        if changes.get("recipe_id") and not await conn.fetchval(
+                "SELECT 1 FROM mes.recipe WHERE id = $1 AND deleted_at IS NULL", changes["recipe_id"]):
+            raise HTTPException(400, "Recette introuvable")
         if changes:
             cols = [c for c in PLAN_FIELDS if c in changes]
             sets = ", ".join(f"{c} = ${i + 2}" for i, c in enumerate(cols))

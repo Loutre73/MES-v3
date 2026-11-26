@@ -1,4 +1,4 @@
-"""Recettes : création, duplication, versions, recherche, comparaison et chargement dans l'automate."""
+"""Recettes : création, modification, duplication, versions, suppression, recherche, comparaison et chargement dans l'automate."""
 from __future__ import annotations
 
 import asyncio
@@ -22,6 +22,33 @@ async def _type(conn, type_id: int) -> dict:
     if t is None:
         raise HTTPException(404, "Type de recette introuvable")
     return dict(t)
+
+
+async def _recipe(conn, rid: int, lock: bool = False) -> dict:
+    r = await conn.fetchrow("SELECT * FROM mes.recipe WHERE id = $1 AND deleted_at IS NULL" + (" FOR UPDATE" if lock else ""), rid)
+    if r is None:
+        raise HTTPException(404, "Recette introuvable")
+    return dict(r)
+
+
+async def _code_free(conn, type_id: int, code: str, exclude: int | None = None) -> None:
+    if not code.strip():
+        raise HTTPException(400, "Le code est obligatoire")
+    if await conn.fetchval("SELECT 1 FROM mes.recipe WHERE type_id = $1 AND code = $2 AND deleted_at IS NULL AND id IS DISTINCT FROM $3",
+                           type_id, code.strip(), exclude):
+        raise HTTPException(409, "Ce code de recette existe déjà")
+
+
+async def usages(conn, rid: int) -> dict:
+    """Où sert la recette : postes en cours ou à venir (une seule recette par poste), postes passés, chargements."""
+    shifts = db.rows(await conn.fetch(
+        """SELECT s.id, s.starts_at, s.ends_at, s.team, m.name AS line, s.starts_at <= now() AS en_cours
+           FROM mes.shift s JOIN catalog.machine m ON m.id = s.line_id
+           WHERE s.recipe_id = $1 AND s.ends_at > now() ORDER BY s.starts_at""", rid))
+    past = await conn.fetchval("SELECT count(*) FROM mes.shift WHERE recipe_id = $1 AND ends_at <= now()", rid)
+    loads = await conn.fetchval(
+        "SELECT count(*) FROM mes.recipe_load l JOIN mes.recipe_version v ON v.id = l.version_id WHERE v.recipe_id = $1", rid)
+    return {"postes": shifts, "postes_passes": past, "chargements": loads}
 
 
 def _validate(tdef: dict, values: dict) -> dict:
@@ -65,10 +92,11 @@ async def search(q: str = "", type_id: int | None = None, statut: str | None = N
             f"""SELECT r.id, r.code, r.label, r.product, r.archived, r.type_id, t.label AS type,
                        v.id AS version_id, v.version, v.status, v.created_at, v.created_by,
                        (SELECT max(l.requested_at) FROM mes.recipe_load l JOIN mes.recipe_version vv ON vv.id = l.version_id
-                        WHERE vv.recipe_id = r.id AND l.result = 'acceptee') AS dernier_chargement
+                        WHERE vv.recipe_id = r.id AND l.result = 'acceptee') AS dernier_chargement,
+                       (SELECT count(*) FROM mes.shift s WHERE s.recipe_id = r.id AND s.ends_at > now()) AS postes_a_venir
                 FROM mes.recipe r JOIN mes.recipe_type t ON t.id = r.type_id
                 JOIN LATERAL (SELECT * FROM mes.recipe_version v WHERE v.recipe_id = r.id ORDER BY v.version DESC LIMIT 1) v ON true
-                WHERE ($1 = '' OR r.code ILIKE '%' || $1 || '%' OR r.label ILIKE '%' || $1 || '%' OR r.product ILIKE '%' || $1 || '%')
+                WHERE r.deleted_at IS NULL AND ($1 = '' OR r.code ILIKE '%' || $1 || '%' OR r.label ILIKE '%' || $1 || '%' OR r.product ILIKE '%' || $1 || '%')
                   AND ($2::int IS NULL OR r.type_id = $2) AND ($3::text IS NULL OR v.status = $3) AND ($4 OR NOT r.archived){cond}
                 ORDER BY r.code""", *args))
 
@@ -76,15 +104,23 @@ async def search(q: str = "", type_id: int | None = None, statut: str | None = N
 @router.get("/{rid}")
 async def get_recipe(rid: int, _: User = Depends(current_user)):
     async with db.pool().acquire() as conn:
-        r = await conn.fetchrow("SELECT * FROM mes.recipe WHERE id = $1", rid)
-        if r is None:
-            raise HTTPException(404, "Recette introuvable")
-        versions = db.rows(await conn.fetch("SELECT * FROM mes.recipe_version WHERE recipe_id = $1 ORDER BY version DESC", rid))
+        r = await _recipe(conn, rid)
+        versions = db.rows(await conn.fetch(
+            """SELECT v.*, EXISTS (SELECT 1 FROM mes.recipe_load l WHERE l.version_id = v.id) AS chargee
+               FROM mes.recipe_version v WHERE v.recipe_id = $1 ORDER BY v.version DESC""", rid))
         loads = db.rows(await conn.fetch(
             """SELECT l.*, v.version FROM mes.recipe_load l JOIN mes.recipe_version v ON v.id = l.version_id
                WHERE v.recipe_id = $1 ORDER BY l.requested_at DESC LIMIT 50""", rid))
         t = await _type(conn, r["type_id"])
-    return {**dict(r), "type": t, "versions": versions, "chargements": loads}
+        u = await usages(conn, rid)
+    return {**r, "type": t, "versions": versions, "chargements": loads, "usages": u}
+
+
+@router.get("/{rid}/usages")
+async def get_usages(rid: int, _: User = Depends(current_user)):
+    async with db.pool().acquire() as conn:
+        await _recipe(conn, rid)
+        return await usages(conn, rid)
 
 
 class RecipeBody(BaseModel):
@@ -101,11 +137,12 @@ async def create(body: RecipeBody, user: User = Depends(require("chef_equipe")))
     async with db.pool().acquire() as conn, conn.transaction():
         t = await _type(conn, body.type_id)
         values = _validate(t["definition"], body.values or {})
-        if await conn.fetchval("SELECT 1 FROM mes.recipe WHERE type_id = $1 AND code = $2", body.type_id, body.code):
-            raise HTTPException(409, "Ce code de recette existe déjà")
+        await _code_free(conn, body.type_id, body.code)
+        if not body.label.strip():
+            raise HTTPException(400, "Le libellé est obligatoire")
         rid = await conn.fetchval(
             "INSERT INTO mes.recipe (type_id, code, label, product, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-            body.type_id, body.code, body.label, body.product, user.username)
+            body.type_id, body.code.strip(), body.label.strip(), (body.product or "").strip() or None, user.username)
         await conn.execute(
             """INSERT INTO mes.recipe_version (recipe_id, version, "values", comment, created_by) VALUES ($1, 1, $2, $3, $4)""",
             rid, values, body.comment or "Création", user.username)
@@ -122,15 +159,12 @@ class DuplicateBody(BaseModel):
 @router.post("/{rid}/dupliquer")
 async def duplicate(rid: int, body: DuplicateBody, user: User = Depends(require("chef_equipe"))):
     async with db.pool().acquire() as conn, conn.transaction():
-        r = await conn.fetchrow("SELECT * FROM mes.recipe WHERE id = $1", rid)
-        if r is None:
-            raise HTTPException(404, "Recette introuvable")
-        if await conn.fetchval("SELECT 1 FROM mes.recipe WHERE type_id = $1 AND code = $2", r["type_id"], body.code):
-            raise HTTPException(409, "Ce code de recette existe déjà")
+        r = await _recipe(conn, rid)
+        await _code_free(conn, r["type_id"], body.code)
         last = await conn.fetchrow("SELECT * FROM mes.recipe_version WHERE recipe_id = $1 ORDER BY version DESC LIMIT 1", rid)
         nid = await conn.fetchval(
             "INSERT INTO mes.recipe (type_id, code, label, product, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-            r["type_id"], body.code, body.label or f"Copie de {r['label']}", body.product or r["product"], user.username)
+            r["type_id"], body.code.strip(), body.label or f"Copie de {r['label']}", body.product or r["product"], user.username)
         await conn.execute(
             """INSERT INTO mes.recipe_version (recipe_id, version, "values", comment, created_by) VALUES ($1, 1, $2, $3, $4)""",
             nid, last["values"], f"Copie de {r['code']} v{last['version']}", user.username)
@@ -149,9 +183,7 @@ class VersionBody(BaseModel):
 async def new_version(rid: int, body: VersionBody, user: User = Depends(require("chef_equipe"))):
     """Toute modification crée une nouvelle version, en brouillon."""
     async with db.pool().acquire() as conn, conn.transaction():
-        r = await conn.fetchrow("SELECT * FROM mes.recipe WHERE id = $1 FOR UPDATE", rid)
-        if r is None:
-            raise HTTPException(404, "Recette introuvable")
+        r = await _recipe(conn, rid, lock=True)
         t = await _type(conn, r["type_id"])
         values = _validate(t["definition"], body.values)
         n = await conn.fetchval("SELECT coalesce(max(version), 0) + 1 FROM mes.recipe_version WHERE recipe_id = $1", rid)
@@ -163,6 +195,29 @@ async def new_version(rid: int, body: VersionBody, user: User = Depends(require(
                                rid, body.label, body.product)
         await db.audit(conn, user.username, "recette_modifiee", "recipe", rid, {"version": n})
     return {"id": vid, "version": n}
+
+
+class DraftBody(BaseModel):
+    values: dict
+    comment: str | None = None
+
+
+@router.put("/versions/{vid}")
+async def update_draft(vid: int, body: DraftBody, user: User = Depends(require("chef_equipe"))):
+    """Un brouillon jamais chargé se corrige sur place ; une version validée, elle, donne une nouvelle version."""
+    async with db.pool().acquire() as conn, conn.transaction():
+        v = await conn.fetchrow(
+            """SELECT v.*, r.type_id FROM mes.recipe_version v JOIN mes.recipe r ON r.id = v.recipe_id
+               WHERE v.id = $1 AND r.deleted_at IS NULL FOR UPDATE OF v""", vid)
+        if v is None:
+            raise HTTPException(404, "Version introuvable")
+        if v["status"] != "brouillon" or await conn.fetchval("SELECT 1 FROM mes.recipe_load WHERE version_id = $1", vid):
+            raise HTTPException(409, "Version validée ou déjà chargée : créer une nouvelle version")
+        values = _validate((await _type(conn, v["type_id"]))["definition"], body.values)
+        await conn.execute("""UPDATE mes.recipe_version SET "values" = $2, comment = coalesce($3, comment) WHERE id = $1""",
+                           vid, values, body.comment or None)
+        await db.audit(conn, user.username, "recette_modifiee", "recipe", v["recipe_id"], {"version": v["version"], "brouillon": True})
+    return {"id": vid, "version": v["version"]}
 
 
 @router.post("/versions/{vid}/valider")
@@ -180,8 +235,84 @@ async def validate_version(vid: int, user: User = Depends(require("chef_equipe")
 @router.post("/{rid}/archiver")
 async def archive(rid: int, user: User = Depends(require("chef_equipe"))):
     async with db.pool().acquire() as conn:
+        await _recipe(conn, rid)
         await conn.execute("UPDATE mes.recipe SET archived = NOT archived WHERE id = $1", rid)
         await db.audit(conn, user.username, "recette_archivee", "recipe", rid)
+    return {"ok": True}
+
+
+class RecipePatch(BaseModel):
+    code: str | None = None
+    label: str | None = None
+    product: str | None = None
+
+
+@router.patch("/{rid}")
+async def update(rid: int, body: RecipePatch, user: User = Depends(require("chef_equipe"))):
+    """Code, libellé et produit : sans nouvelle version (les valeurs, elles, sont versionnées)."""
+    async with db.pool().acquire() as conn, conn.transaction():
+        r = await _recipe(conn, rid, lock=True)
+        code = body.code.strip() if body.code is not None else r["code"]
+        label = body.label.strip() if body.label is not None else r["label"]
+        product = (body.product.strip() or None) if body.product is not None else r["product"]
+        if code != r["code"]:
+            await _code_free(conn, r["type_id"], code, exclude=rid)
+        if not label:
+            raise HTTPException(400, "Le libellé est obligatoire")
+        await conn.execute("UPDATE mes.recipe SET code = $2, label = $3, product = $4 WHERE id = $1", rid, code, label, product)
+        await db.audit(conn, user.username, "recette_renommee", "recipe", rid,
+                       {"avant": {k: r[k] for k in ("code", "label", "product")}, "apres": {"code": code, "label": label, "product": product}})
+    return {"ok": True}
+
+
+def delete_plan(u: dict, detach: bool) -> str:
+    """Décide de la suppression : 'effacer' (jamais servie), 'masquer' (historique conservé) ; lève une erreur sinon."""
+    running = [s for s in u["postes"] if s["en_cours"]]
+    if running:
+        raise HTTPException(409, f"En production sur {running[0]['line']} : attendre la fin du poste")
+    if u["postes"] and not detach:
+        raise HTTPException(409, f"Prévue sur {len(u['postes'])} poste(s) à venir")
+    return "effacer" if not u["postes_passes"] and not u["chargements"] else "masquer"
+
+
+@router.delete("/{rid}")
+async def delete(rid: int, retirer_postes: bool = False, user: User = Depends(require("chef_equipe"))):
+    """Supprime une recette. Les postes à venir qui l'utilisent la perdent (retirer_postes=true exigé) ;
+    une recette déjà produite ou chargée reste lisible dans l'historique, mais disparaît des listes."""
+    async with db.pool().acquire() as conn, conn.transaction():
+        r = await _recipe(conn, rid, lock=True)
+        u = await usages(conn, rid)
+        mode = delete_plan(u, retirer_postes)
+        detached = len(u["postes"])
+        if detached:
+            await conn.execute("UPDATE mes.shift SET recipe_id = NULL WHERE recipe_id = $1 AND starts_at > now()", rid)
+        if mode == "effacer":
+            await conn.execute("DELETE FROM mes.recipe_version WHERE recipe_id = $1", rid)
+            await conn.execute("DELETE FROM mes.recipe WHERE id = $1", rid)
+        else:
+            await conn.execute("UPDATE mes.recipe SET deleted_at = now(), deleted_by = $2, archived = true WHERE id = $1", rid, user.username)
+        await db.audit(conn, user.username, "recette_supprimee", "recipe", rid,
+                       {"code": r["code"], "mode": mode, "postes_retires": detached})
+    return {"mode": mode, "postes_retires": detached}
+
+
+@router.delete("/versions/{vid}")
+async def delete_version(vid: int, user: User = Depends(require("chef_equipe"))):
+    """Abandon d'un brouillon jamais chargé (une recette garde au moins une version)."""
+    async with db.pool().acquire() as conn, conn.transaction():
+        v = await conn.fetchrow(
+            """SELECT v.* FROM mes.recipe_version v JOIN mes.recipe r ON r.id = v.recipe_id
+               WHERE v.id = $1 AND r.deleted_at IS NULL FOR UPDATE OF v""", vid)
+        if v is None:
+            raise HTTPException(404, "Version introuvable")
+        if v["status"] != "brouillon":
+            raise HTTPException(400, "Seul un brouillon peut être supprimé")
+        if await conn.fetchval("SELECT 1 FROM mes.recipe_load WHERE version_id = $1", vid):
+            raise HTTPException(400, "Version déjà chargée dans l'automate")
+        if await conn.fetchval("SELECT count(*) FROM mes.recipe_version WHERE recipe_id = $1", v["recipe_id"]) <= 1:
+            raise HTTPException(400, "Dernière version : supprimer la recette")
+        await conn.execute("DELETE FROM mes.recipe_version WHERE id = $1", vid)
+        await db.audit(conn, user.username, "recette_version_supprimee", "recipe", v["recipe_id"], {"version": v["version"]})
     return {"ok": True}
 
 
