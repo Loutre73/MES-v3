@@ -9,6 +9,10 @@ Les règles (fréquence des arrêts, dérive des moteurs, bruit...) se modifient
 console d'exploitation, et des scénarios peuvent être injectés (panne de ligne, coupure OPC UA...)
 par le port de contrôle interne (8090, non publié). Les règles modifiées sont conservées dans
 SIM_DATA (volume) et rechargées au démarrage.
+
+Le temps simulé avance à la vitesse choisie (×1 à ×3600, 0 = pause) : arrêts, compteurs, dérives
+et durées des scénarios suivent l'horloge simulée ; les horodatages OPC UA restent l'heure réelle.
+Les scénarios (groupes de variables, règles à effets sur une frise) sont décrits dans scenarios.py.
 """
 from __future__ import annotations
 
@@ -19,6 +23,7 @@ import logging
 import math
 import os
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -27,9 +32,13 @@ from pathlib import Path
 import yaml
 from asyncua import Server, ua
 
+from scenarios import Engine
+
 log = logging.getLogger("simulator")
 
 SIEMENS_NS = "http://www.siemens.com/simatic-s7-opcua"
+GOOD = ua.StatusCode(ua.StatusCodes.Good)
+BAD = ua.StatusCode(ua.StatusCodes.BadSensorFailure)   # effet « Qualité mauvaise »
 
 VARIANT = {
     "Real": ua.VariantType.Float,
@@ -52,7 +61,13 @@ STRUCTS: dict[str, list[tuple[str, str]]] = {
 class Var:
     nodeid: ua.NodeId
     vtype: ua.VariantType
-    value: float | bool | int
+    value: float | bool | int          # valeur publiée (après les effets des scénarios)
+    raw: float | bool | int | None = None   # valeur calculée par le comportement de l'instance
+    bad: bool = False                  # qualité OPC UA mauvaise (effet « Qualité »)
+
+    def __post_init__(self):
+        if self.raw is None:
+            self.raw = self.value
 
 
 # Règles réglables par DB (valeurs par défaut = comportement d'origine du simulateur)
@@ -66,17 +81,9 @@ DEFAULT_RULES: dict[str, dict[str, float]] = {
 RULE_LIMITS = {"arrets_h": (0, 120), "duree_arret_s": (5, 3600), "part_defaut": (0, 1), "derive_ratio": (0, 1),
                "bruit_pct": (0, 20), "cadence_pct": (10, 150), "amplitude_pct": (0, 100), "change_ratio": (0, 1),
                "ecart": (0, 10)}
-GLOBAL_LIMITS = {"time_acceleration": (1, 3600), "update_interval_s": (0.2, 10)}
-
-# Scénarios injectables : libellé, cible par défaut (struct), paramètres par défaut
-SCENARIOS = {
-    "panne_ligne": ("Panne de ligne", "ligne", {"duree_min": 12}),
-    "micro_arrets": ("Micro-arrêts", "ligne", {"duree_min": 15}),
-    "defaut_moteur": ("Défaut moteur", "moteur", {"duree_min": 10}),
-    "derive_moteur": ("Dérive moteur", "moteur", {"duree_min": 60, "pct": 15}),
-    "pic_conso": ("Pic de consommation", None, {"duree_min": 10, "pct": 45}),
-    "coupure_opcua": ("Coupure OPC UA", None, {"duree_s": 60}),
-}
+# vitesse : facteur du temps simulé (0 = pause) ; time_acceleration : vieillissement des moteurs
+# (dérive, heures de marche) par heure simulée
+GLOBAL_LIMITS = {"vitesse": (0, 3600), "time_acceleration": (1, 3600), "update_interval_s": (0.2, 10)}
 
 
 @dataclass
@@ -100,37 +107,50 @@ class Plant:
         self.rules: dict[str, dict] = {}          # DB -> règles
         self.structs: dict[str, str] = {}         # DB -> struct
         self.counts: dict[str, int] = {}          # DB -> instances
-        self.scenarios: dict[str, dict] = {}      # scénarios en cours
         self.by_name: dict[str, Instance] = {}
         self.tag_index: list[tuple[str, Var]] = []
-        self.t0 = time.monotonic()
+        self.clock = time.time()                  # horloge simulée (secondes epoch)
+        self.clock0 = self.clock
+        self.engine = Engine()
+        self.coupure = False                      # coupure OPC UA demandée par un scénario
+        self._touched: dict[int, Var] = {}
+        self._overridden: dict[int, Var] = {}
 
-    def rule(self, inst: Instance, key: str) -> float:
-        return self.rules[inst.db][key]
+    def bind_engine(self, engine: Engine) -> None:
+        self.engine = engine
+        engine.bind(self.instances, {k: [m for m, _ in v] for k, v in STRUCTS.items()})
 
-    def scenario(self, sid: str, target: str | None = None) -> dict | None:
-        sc = self.scenarios.get(sid)
-        if sc is None:
-            return None
-        if sc["fin"] is not None and time.time() >= sc["fin"]:
-            self.scenarios.pop(sid, None)
-            log.info("scénario terminé : %s", sid)
-            return None
-        if target is not None and sc.get("cible") != target:
-            return None
-        return sc
+    @staticmethod
+    def cast(var: Var, value):
+        if var.vtype in (ua.VariantType.Float, ua.VariantType.Double):
+            return float(value)
+        if var.vtype == ua.VariantType.Boolean:
+            return bool(value)
+        return int(round(value))
 
     def set(self, inst: Instance, member: str, value):
+        """Valeur brute calculée par le comportement ; publiée après les effets (finalize)."""
         var = inst.vars[member]
-        if var.vtype in (ua.VariantType.Float, ua.VariantType.Double):
-            value = float(value)
-        elif var.vtype == ua.VariantType.Boolean:
-            value = bool(value)
-        else:
-            value = int(value)
-        if value != var.value:
-            var.value = value
-            self.changed.append(var)
+        var.raw = self.cast(var, value)
+        self._touched[id(var)] = var
+
+    def finalize(self, active) -> None:
+        """Applique les effets des scénarios aux valeurs brutes et note ce qui change."""
+        cands = {**self._touched, **self._overridden, **active.vars}
+        for k, var in cands.items():
+            effects = active.var.get(k)
+            if effects:
+                out, bad = self.engine.apply(var, var.raw, effects, self.rng)
+                out = self.cast(var, out)
+                if isinstance(out, float):
+                    out = round(out, 3)
+            else:
+                out, bad = var.raw, False
+            if out != var.value or bad != var.bad:
+                var.value, var.bad = out, bad
+                self.changed.append(var)
+        self._touched = {}
+        self._overridden = dict(active.vars)
 
     def init_state(self, inst: Instance, db: dict):
         r = self.rng
@@ -139,92 +159,99 @@ class Plant:
             # une petite part des moteurs dérive lentement, pour tester le suivi des dérives
             inst.state["u_drift"] = r.random()           # tirage fixe : la règle derive_ratio choisit les moteurs
             inst.state["drift_mag"] = r.uniform(0.02, 0.08)
-            inst.state["t0"] = time.monotonic()
-            inst.vars["Marche"].value = True
+            inst.vars["Marche"].value = inst.vars["Marche"].raw = True
         elif inst.struct == "compteur_energie":
             inst.state["base_kw"] = r.uniform(20, 400)
-            inst.vars["Energie_kWh"].value = r.uniform(1e4, 1e6)
+            inst.vars["Energie_kWh"].value = inst.vars["Energie_kWh"].raw = r.uniform(1e4, 1e6)
         elif inst.struct == "ligne":
             inst.state["debit"] = r.uniform(50, 300)
-            inst.vars["Marche"].value = True
+            inst.vars["Marche"].value = inst.vars["Marche"].raw = True
         elif inst.struct == "mesure":
-            inst.vars["Valeur"].value = round(r.uniform(0, 100), 2)
+            inst.vars["Valeur"].value = inst.vars["Valeur"].raw = round(r.uniform(0, 100), 2)
 
     def step(self, dt: float):
+        """Un cycle : dt secondes réelles, soit dt × vitesse secondes simulées."""
+        speed = float(self.cfg.get("vitesse", 1))
+        if speed <= 0:            # pause : rien ne bouge, la coupure éventuelle reste en place
+            return
         r = self.rng
+        dt = dt * speed
+        self.clock += dt
         accel = float(self.cfg.get("time_acceleration", 60))
-        pic = self.scenario("pic_conso")
-        now = time.time()
+        age_h = (self.clock - self.clock0) / 3600.0 * accel
+        act = self.engine.compute(self.clock)
+        self.coupure = act.coupure
         for inst in self.instances:
             s = inst.state
             v = inst.vars
             R = self.rules[inst.db]
+            F = act.inst.get(inst.name) or {}
+            if "aleas" in F:
+                R = {**R, **F["aleas"]}
+            forced = "defaut" in F or "arret" in F
             if inst.struct == "moteur":
-                running = v["Marche"].value
-                forced = self.scenario("defaut_moteur", inst.name)
+                running = v["Marche"].raw
                 if forced:
                     running = False
-                    self.set(inst, "Defaut", True)
+                    self.set(inst, "Defaut", "defaut" in F)
+                elif s.pop("forced", False):
+                    running = True    # fin du forçage : le moteur redémarre
+                    self.set(inst, "Defaut", False)
                 elif running and r.random() < R["arrets_h"] * dt / 3600.0:
                     running = False
                     self.set(inst, "Defaut", r.random() < R["part_defaut"])
                 elif not running and r.random() < dt / max(R["duree_arret_s"], dt):
                     running = True
                     self.set(inst, "Defaut", False)
+                if forced:
+                    s["forced"] = True
                 self.set(inst, "Marche", running)
                 if running:
-                    hours = (time.monotonic() - s["t0"]) / 3600.0 * accel
                     drift_per_h = s["drift_mag"] if s["u_drift"] < R["derive_ratio"] else 0.0
-                    drift = 1.0 + drift_per_h * hours
-                    sc = self.scenario("derive_moteur", inst.name)
-                    if sc:   # rampe sur la moitié de la durée du scénario, puis palier
-                        ramp = max(1.0, (sc["fin"] - sc["debut"]) / 2)
-                        drift *= 1 + sc["pct"] / 100.0 * min(1.0, (now - sc["debut"]) / ramp)
-                    current = s["nominal"] * drift * (1 + r.gauss(0, R["bruit_pct"] / 100.0))
+                    current = s["nominal"] * (1.0 + drift_per_h * age_h) * (1 + r.gauss(0, R["bruit_pct"] / 100.0))
                     self.set(inst, "Courant", round(current, 2))
                     self.set(inst, "Vitesse", round(1480 + r.gauss(0, 2), 1))
                 else:
                     self.set(inst, "Courant", 0.0)
                     self.set(inst, "Vitesse", 0.0)
-                if running and r.random() < dt / 3600.0 * accel:
-                    self.set(inst, "Heures", v["Heures"].value + 1)
+                if running:
+                    # heures de marche (vieillissement accéléré) : tirage, ou ajout direct à grande vitesse
+                    h = dt / 3600.0 * accel
+                    inc = int(h) + (r.random() < h - int(h))
+                    if inc:
+                        self.set(inst, "Heures", v["Heures"].raw + inc)
             elif inst.struct == "compteur_energie":
                 amp = R["amplitude_pct"] / 100.0
-                kw = s["base_kw"] * (1 + amp * math.sin(time.time() / 600) + r.gauss(0, R["bruit_pct"] / 100.0))
-                if pic:
-                    kw *= 1 + pic["pct"] / 100.0
+                kw = s["base_kw"] * (1 + amp * math.sin(self.clock / 600) + r.gauss(0, R["bruit_pct"] / 100.0))
                 self.set(inst, "Puissance_kW", round(kw, 1))
-                self.set(inst, "Energie_kWh", round(v["Energie_kWh"].value + kw * dt / 3600.0, 3))
+                # l'énergie intègre la puissance publiée (effets des scénarios compris)
+                self.set(inst, "Energie_kWh", round(v["Energie_kWh"].raw + float(v["Puissance_kW"].value) * dt / 3600.0, 3))
             elif inst.struct == "ligne":
-                running = v["Marche"].value
-                panne = self.scenario("panne_ligne", inst.name)
-                micro = self.scenario("micro_arrets", inst.name)
-                if panne:
+                running = v["Marche"].raw
+                if forced:
                     running = False
-                    self.set(inst, "Code_arret", panne.get("code", 1))
-                elif micro:
-                    # 20 s d'arrêt toutes les 2 minutes
-                    stopped = (now - micro["debut"]) % 120 < 20
-                    running = not stopped
-                    self.set(inst, "Code_arret", 0 if running else micro.get("code", 2))
+                    p = F.get("defaut") or F.get("arret")
+                    self.set(inst, "Code_arret", p.get("code", 1))
+                elif s.pop("forced", False):
+                    running = True    # fin du forçage : la ligne redémarre
+                    self.set(inst, "Code_arret", 0)
                 elif running and r.random() < R["arrets_h"] * dt / 3600.0:
                     running = False
                     self.set(inst, "Code_arret", r.randint(1, 12))
                 elif not running and r.random() < dt / max(R["duree_arret_s"], dt):
                     running = True
                     self.set(inst, "Code_arret", 0)
-                if (panne or micro) and not s.get("in_scenario"):
-                    s["in_scenario"] = True
-                elif not (panne or micro) and s.pop("in_scenario", False):
-                    running = True    # fin du scénario : la ligne redémarre
-                    self.set(inst, "Code_arret", 0)
+                if forced:
+                    s["forced"] = True
                 self.set(inst, "Marche", running)
                 debit = s["debit"] * R["cadence_pct"] / 100.0 * (1 + r.gauss(0, R["bruit_pct"] / 100.0)) if running else 0.0
                 self.set(inst, "Debit_th", round(debit, 1))
-                self.set(inst, "Tonnage_t", round(v["Tonnage_t"].value + debit * dt / 3600.0, 3))
+                # le tonnage intègre le débit publié (effets des scénarios compris)
+                self.set(inst, "Tonnage_t", round(v["Tonnage_t"].raw + float(v["Debit_th"].value) * dt / 3600.0, 3))
             elif inst.struct == "mesure":
                 if r.random() < R["change_ratio"]:
-                    self.set(inst, "Valeur", round(v["Valeur"].value + r.gauss(0, R["ecart"]), 2))
+                    self.set(inst, "Valeur", round(v["Valeur"].raw + r.gauss(0, R["ecart"]), 2))
+        self.finalize(act)
 
     # --- contrôle depuis la console ------------------------------------------------------------
     def set_rules(self, body: dict) -> None:
@@ -252,40 +279,14 @@ class Plant:
             for k, v in rules.items():
                 self.rules[db][k] = float(v)
 
-    def start_scenario(self, sid: str, body: dict) -> dict:
-        if sid not in SCENARIOS:
-            raise LookupError(f"scénario inconnu : {sid}")
-        if body.get("action") == "stop":
-            self.scenarios.pop(sid, None)
-            return {"id": sid, "label": SCENARIOS[sid][0], "actif": False}
-        label, struct, defaults = SCENARIOS[sid]
-        params = {**defaults, **{k: body[k] for k in defaults if k in body}}
-        cible = body.get("cible")
-        if struct:
-            if not cible:
-                cible = next(i.name for i in self.instances if i.struct == struct)
-            inst = self.by_name.get(cible)
-            if inst is None or inst.struct != struct:
-                raise ValueError(f"cible invalide pour ce scénario : {cible}")
-        dur = float(params.get("duree_s") or 60 * float(params.get("duree_min", 10)))
-        if not 5 <= dur <= 24 * 3600:
-            raise ValueError("durée invalide (5 s à 24 h)")
-        now = time.time()
-        self.scenarios[sid] = {**params, "id": sid, "label": label, "cible": cible, "debut": now, "fin": now + dur}
-        log.info("scénario lancé : %s %s (%d s)", sid, cible or "", dur)
-        return {**self.scenarios[sid], "actif": True}
-
     def state(self) -> dict:
-        for sid in list(self.scenarios):
-            self.scenario(sid)
         return {
-            "global": {k: self.cfg.get(k) for k in GLOBAL_LIMITS},
+            "global": {k: self.cfg.get(k, 1 if k == "vitesse" else None) for k in GLOBAL_LIMITS},
+            "horloge": self.clock,
             "total_tags": len(self.tag_index),
             "dbs": [{"nom": db, "struct": self.structs[db], "instances": self.counts[db], "regles": self.rules[db],
                      "defauts": DEFAULT_RULES[self.structs[db]]} for db in self.rules],
-            "scenarios": [{"id": sid, "label": lab, "cible_type": st, "parametres": d,
-                           "cibles": [i.name for i in self.instances if i.struct == st][:200] if st else [],
-                           "en_cours": self.scenarios.get(sid)} for sid, (lab, st, d) in SCENARIOS.items()],
+            **self.engine.state(self.clock),
         }
 
     def search(self, q: str = "", names: list[str] | None = None, limit: int = 50) -> list[dict]:
@@ -300,7 +301,7 @@ class Plant:
                     hits.append((n, v))
                     if len(hits) >= limit:
                         break
-        return [{"nom": n, "valeur": v.value} for n, v in hits]
+        return [{"nom": n, "valeur": v.value, **({"qualite": "mauvaise"} if v.bad else {})} for n, v in hits]
 
 
 async def build(server: Server, cfg: dict, plant: Plant) -> int:
@@ -480,13 +481,37 @@ class Control:
                 return 400, {"erreur": str(e)}
             self.save()
             return 200, p.state()
-        if method == "POST" and u.path.startswith("/scenarios/"):
-            try:
-                return 200, p.start_scenario(u.path.rsplit("/", 1)[1], body)
-            except LookupError as e:
-                return 404, {"erreur": str(e)}
-            except (ValueError, TypeError) as e:
-                return 400, {"erreur": str(e)}
+        eng = p.engine
+        try:
+            if method == "POST" and u.path == "/apercu":
+                return 200, eng.preview(body)
+            m = re.fullmatch(r"/groupes/([A-Za-z0-9_-]{1,40})", u.path)
+            if m and method == "PUT":
+                return 200, {"id": m.group(1), **eng.put_group(m.group(1), body)}
+            if m and method == "DELETE":
+                eng.delete_group(m.group(1))
+                return 200, {"id": m.group(1), "supprime": True}
+            m = re.fullmatch(r"/scenarios/([A-Za-z0-9_-]{1,40})", u.path)
+            if m and method == "PUT":
+                return 200, {"id": m.group(1), **eng.put_seq(m.group(1), body)}
+            if m and method == "DELETE":
+                eng.delete_seq(m.group(1))
+                return 200, {"id": m.group(1), "supprime": True}
+            m = re.fullmatch(r"/scenarios/([A-Za-z0-9_-]{1,40})/(lancer|arreter)", u.path)
+            if m and method == "POST":
+                sid, action = m.groups()
+                if action == "lancer":
+                    eng.start(sid, p.clock)
+                else:
+                    eng.stop(sid)
+                return 200, {"id": sid, "nom": eng.seqs.get(sid, {}).get("nom", sid), "en_cours": sid in eng.running}
+            if method == "POST" and u.path == "/scenarios-arreter":
+                eng.stop()
+                return 200, {"en_cours": False}
+        except LookupError as e:
+            return 404, {"erreur": str(e)}
+        except (ValueError, TypeError) as e:
+            return 400, {"erreur": str(e)}
         return 404, {"erreur": "introuvable"}
 
 
@@ -549,7 +574,10 @@ async def main():
     plant = Plant(cfg, random.Random(cfg.get("seed", 42)))
     n = await build(server, cfg, plant)
     log.info("%d variables créées", n)
-    ctl = Control(plant, os.environ.get("SIM_DATA", "/data"))
+    data_dir = os.environ.get("SIM_DATA", "/data")
+    plant.bind_engine(Engine(data_dir))
+    plant.engine.load()
+    ctl = Control(plant, data_dir)
     ctl.load()
     await serve(int(os.environ.get("SIM_CONTROL_PORT", "8090")), ctl.handle)
 
@@ -560,8 +588,8 @@ async def main():
         while True:
             period = float(cfg.get("update_interval_s", 1.0))
             plant.step(period)   # le premier tour publie aussi les valeurs initiales
-            # scénario « coupure OPC UA » : le serveur s'arrête puis redémarre (les clients se reconnectent)
-            cut = plant.scenario("coupure_opcua")
+            # effet « Coupure OPC UA » : le serveur s'arrête puis redémarre (les clients se reconnectent)
+            cut = plant.coupure
             if cut and ctl.opc_up:
                 log.info("coupure OPC UA simulée")
                 await server.stop()
@@ -572,7 +600,8 @@ async def main():
                 log.info("serveur OPC UA rétabli")
             now = datetime.now(timezone.utc)
             for var in plant.changed:
-                dv = ua.DataValue(ua.Variant(var.value, var.vtype), SourceTimestamp=now, ServerTimestamp=now)
+                dv = ua.DataValue(ua.Variant(var.value, var.vtype), SourceTimestamp=now, ServerTimestamp=now,
+                                  StatusCode=BAD if var.bad else GOOD)
                 await server.write_attribute_value(var.nodeid, dv)
             if ctl.opc_up:
                 for rdb in plant.recipes:

@@ -1,6 +1,5 @@
 import random
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -31,22 +30,3 @@ def test_regles_validees_tout_ou_rien():
     assert p.rules["DB_Lignes"]["arrets_h"] == DEFAULT_RULES["ligne"]["arrets_h"]
     p.set_rules({"global": {"time_acceleration": 120}, "dbs": {"DB_Lignes": {"arrets_h": 5}}})
     assert p.rules["DB_Lignes"]["arrets_h"] == 5 and p.cfg["time_acceleration"] == 120
-
-
-def test_scenario_panne_puis_redemarrage():
-    p, inst = plant_with_line()
-    p.set_rules({"dbs": {"DB_Lignes": {"arrets_h": 0}}})
-    p.start_scenario("panne_ligne", {"cible": "L3", "duree_min": 1})
-    p.step(1.0)
-    assert inst.vars["Marche"].value is False and inst.vars["Code_arret"].value == 1
-    p.scenarios["panne_ligne"]["fin"] = time.time() - 1      # fin du scénario
-    p.step(1.0)
-    assert inst.vars["Marche"].value is True and inst.vars["Code_arret"].value == 0
-
-
-def test_scenario_cible_invalide():
-    p, _ = plant_with_line()
-    with pytest.raises(ValueError):
-        p.start_scenario("panne_ligne", {"cible": "M101"})
-    with pytest.raises(LookupError):
-        p.start_scenario("inconnu", {})
