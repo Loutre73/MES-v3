@@ -268,11 +268,11 @@ class Engine:
         sel = normalize_selection(body, self.structs)
         hits = select(sel, self.instances)
         tags = [f"{i.db}.{i.name}.{m}" for i, ms in hits for m in ms]
-        return {"instances": len(hits), "tags": len(tags), "exemples": tags[:limit]}
+        return {"n_instances": len(hits), "tags": len(tags), "exemples": tags[:limit]}
 
     def count(self, cible) -> dict:
         hits = self.resolve(cible)
-        return {"instances": len(hits), "tags": sum(len(ms) for _, ms in hits)}
+        return {"n_instances": len(hits), "tags": sum(len(ms) for _, ms in hits)}
 
     # -- scénarios
     def _put_seq(self, sid: str, body: dict) -> dict:

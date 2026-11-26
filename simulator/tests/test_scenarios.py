@@ -47,7 +47,7 @@ def test_selection_par_type_plage_et_membres():
     hits = select(sel, p.instances)
     assert [i.name for i, _ in hits] == [f"M{n}" for n in range(101, 111)] + ["M120"]
     assert all(ms == ["Courant"] for _, ms in hits)
-    assert p.engine.preview({"type": "mesure", "instances": "P1*"})["instances"] == 11   # P1, P10..P19
+    assert p.engine.preview({"type": "mesure", "instances": "P1*"})["n_instances"] == 11   # P1, P10..P19
     assert p.engine.preview({"type": "tous", "contient": "DB_Lignes"})["tags"] == 12
     with pytest.raises(ValueError):
         normalize_selection({"type": "moteur", "membres": ["Tonnage_t"]}, p.engine.structs)
@@ -180,7 +180,7 @@ def test_exemples_valides_et_persistance(tmp_path):
 def test_debit_des_lignes_et_tonnage():
     p = make_plant()
     p.engine.load()
-    assert p.engine.count("debits") == {"instances": 3, "tags": 3}
+    assert p.engine.count("debits") == {"n_instances": 3, "tags": 3}
     p.step(1.0)
     L1 = p.by_name["L1"].vars
     base = L1["Debit_th"].raw
