@@ -70,3 +70,14 @@ def test_libelle_de_purge():
     r = {"chunks": 3, "liberes_octets": 2_500_000_000}
     assert agent.describe_purge("1min", 720, r) == "Purge : agrégats 1 min de plus de 30 j (3 blocs, 2500 Mo libérés)"
     assert agent.describe_purge("brut", 6, r).startswith("Purge : données brutes de plus de 6 h")
+
+
+def test_routes_des_scenarios_de_simulation():
+    r = agent.sim_route("PUT", "/api/ops/simulation/scenarios/cascade", {"nom": "Cascade"})
+    assert r[0] == "/scenarios/cascade" and "Cascade" in r[1]({})
+    r = agent.sim_route("POST", "/api/ops/simulation/scenarios/cascade/lancer", {})
+    assert r[0] == "/scenarios/cascade/lancer" and r[1]({"nom": "Cascade"}) == "Scénario « Cascade » lancé"
+    assert agent.sim_route("DELETE", "/api/ops/simulation/groupes/g-1", {})[0] == "/groupes/g-1"
+    assert agent.sim_route("POST", "/api/ops/simulation/apercu", {}) == ("/apercu", None)
+    assert agent.sim_route("DELETE", "/api/ops/simulation/scenarios/../etc", {}) is None
+    assert agent.sim_route("POST", "/api/ops/services/x/start", {}) is None

@@ -340,6 +340,36 @@ def http_json(method: str, url: str, body: dict | None = None, timeout: float = 
         return None
 
 
+SIM_ID = r"([A-Za-z0-9_-]{1,40})"
+
+
+def sim_route(method: str, path: str, body: dict):
+    """Actions de scénario relayées au simulateur : (chemin côté simulateur, libellé du journal) ou None."""
+    sub = path.removeprefix("/api/ops/simulation")
+    if sub == path:
+        return None
+    nom = (body or {}).get("nom") or ""
+    if method == "POST" and sub == "/apercu":
+        return sub, None
+    if method == "POST" and sub == "/scenarios-arreter":
+        return sub, lambda r: "Simulation : tous les scénarios arrêtés"
+    m = re.fullmatch(r"/groupes/" + SIM_ID, sub)
+    if m and method == "PUT":
+        return sub, lambda r: f"Simulation : groupe « {r.get('nom', nom)} » enregistré"
+    if m and method == "DELETE":
+        return sub, lambda r: f"Simulation : groupe {m.group(1)} supprimé"
+    m = re.fullmatch(r"/scenarios/" + SIM_ID, sub)
+    if m and method == "PUT":
+        return sub, lambda r: f"Simulation : scénario « {r.get('nom', nom)} » enregistré"
+    if m and method == "DELETE":
+        return sub, lambda r: f"Simulation : scénario {m.group(1)} supprimé"
+    m = re.fullmatch(r"/scenarios/" + SIM_ID + r"/(lancer|arreter)", sub)
+    if m and method == "POST":
+        verb = "lancé" if m.group(2) == "lancer" else "arrêté"
+        return sub, lambda r: f"Scénario « {r.get('nom', m.group(1))} » {verb}"
+    return None
+
+
 # ----------------------------------------------------------------------------- journal des opérations
 JOURNAL_LOCK = threading.Lock()
 
@@ -547,6 +577,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):  # noqa: N802
         self.act("PUT")
 
+    def do_DELETE(self):  # noqa: N802
+        self.act("DELETE")
+
     def act(self, method: str):
         path = self.path.partition("?")[0]
         u = self.user()
@@ -624,17 +657,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self.err(503, "Simulateur absent ou injoignable")
             if "erreur" in r:
                 return self.err(r.get("status", 400), r["erreur"])
-            journal_add(who, "Règles de simulation modifiées", True, json.dumps(body, ensure_ascii=False)[:300])
+            g = body.get("global") or {}
+            if set(g) == {"vitesse"} and not body.get("dbs"):
+                v = float(g["vitesse"])
+                journal_add(who, "Simulation en pause" if v == 0 else f"Vitesse de simulation ×{v:g}")
+            else:
+                journal_add(who, "Règles de simulation modifiées", True, json.dumps(body, ensure_ascii=False)[:300])
             return self.send(200, r)
-        m = re.fullmatch(r"/api/ops/simulation/scenarios/([a-z_]+)", path)
-        if method == "POST" and m:
-            r = http_json("POST", SIMULATOR_URL + f"/scenarios/{m.group(1)}", body)
+        sim = sim_route(method, path, body)
+        if sim:
+            sub, label = sim
+            r = http_json(method, SIMULATOR_URL + sub, body)
             if r is None:
                 return self.err(503, "Simulateur absent ou injoignable")
             if "erreur" in r:
                 return self.err(r.get("status", 400), r["erreur"])
-            what = "arrêté" if body.get("action") == "stop" else "lancé"
-            journal_add(who, f"Scénario « {r.get('label', m.group(1))} » {what}", True, body.get("cible") or "")
+            if label:
+                journal_add(who, label(r))
             return self.send(200, r)
         return self.err(404, "Introuvable")
 
