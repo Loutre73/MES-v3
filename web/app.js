@@ -8,6 +8,9 @@ import { Synthese } from "./synthese.js";
 import { Ligne } from "./ligne.js";
 import { Planning } from "./planning.js";
 import { Recettes } from "./recettes.js";
+import { Energie } from "./energie.js";
+import { Analyse } from "./analyse.js";
+import { Pareto } from "./charts.js";
 import "./touch.js";
 
 // ----------------------------------------------------------------------------- connexion
@@ -38,7 +41,6 @@ function Stops({ user }) {
   const [qual, setQual] = useState(null), [split, setSplit] = useState(null);
   const a = useAction();
   const reload = () => { list.reload(); par.reload(); };
-  const maxMin = Math.max(1, ...(par.data || []).map(p => p.minutes));
   const PER = [[1, "24 h"], [7, "7 j"], [31, "31 j"]];
   return html`<h1>Arrêts</h1>
     <${Msg} ...${a.msg} />
@@ -61,11 +63,9 @@ function Stops({ user }) {
           ${can(user, "chef_equipe", "operateur") && s.ends_at && html`<button class="iconbtn" onClick=${() => setSplit(s)} title="Découper en deux" aria-label="Découper en deux"><${Icon} d=${ICON.cut} /></button>`}</td>
       </tr>`)}</tbody></table></div>
     ${list.data && !list.data.length && html`<p class="muted">Aucun arrêt.</p>`}
-    <h2 class="row">Pareto <${Info}>Arrêts non planifiés, durée cumulée par cause (jj:hh:mm:ss).</${Info}></h2>
-    <div class="panel" style="display:grid;gap:10px">${(par.data || []).map(p => html`<div class="hbar">
-      <span>${p.cause}</span><span class="num"><b>${dhms(p.minutes * 60)}</b> <span class="muted">· ${p.nombre}</span></span>
-      <div class="track"><div class=${p.category === "non_qualifie" ? "warn" : ""} style=${{ width: (p.minutes / maxMin) * 100 + "%" }}></div></div></div>`)}
-      ${par.data && !par.data.length && html`<span class="muted">Aucun arrêt.</span>`}</div>
+    <h2>Pareto <span class="sub" style="font-weight:600">non planifiés · jj:hh:mm:ss</span></h2>
+    <div class="panel"><${Pareto} height=${260} fmt=${dhms} empty="Aucun arrêt."
+      items=${(par.data || []).map(p => ({ label: p.cause, v: p.minutes * 60, sub: `${p.nombre} arrêts`, color: p.category === "non_qualifie" ? "var(--orange)" : null }))} /></div>
     ${qual && html`<${QualifyDialog} stop=${qual} causes=${causes.data || []} onClose=${() => setQual(null)}
         onDone=${() => { setQual(null); a.setMsg({ ok: "Arrêt qualifié." }); reload(); }} />`}
     ${split && html`<${SplitDialog} stop=${split} onClose=${() => setSplit(null)}
@@ -204,34 +204,6 @@ function MotorDetail({ m, user, settings, onChange, onClose }) {
   </div>`;
 }
 
-// ----------------------------------------------------------------------------- énergie
-function Energy() {
-  const [days, setDays] = useState(7);
-  const { data, error } = useApi(`/energie?jours=${days}`, [], 60000);
-  if (error) return html`<${Msg} error=${error} />`;
-  if (!data) return html`<p class="muted">Chargement…</p>`;
-  const total = data.par_compteur.reduce((s, c) => s + (c.kwh || 0), 0);
-  const tons = data.par_shift.reduce((s, c) => s + (c.tonnage_t || 0), 0);
-  const maxK = Math.max(1, ...data.par_compteur.map(c => c.kwh || 0));
-  const lines = [...new Set(data.par_shift.map(s => s.line))];
-  const colors = ["#1f5fbf", "#c77c02", "#1e8e4e", "#8a3fbf", "#c62f2f", "#00838f"];
-  return html`<div class="row"><h1>Énergie</h1><span class="spacer"></span>
-      <select value=${days} onChange=${e => setDays(+e.target.value)}><option value="1">24 h</option><option value="7">7 jours</option><option value="31">31 jours</option></select></div>
-    <div class="kpis">
-      <div class="panel kpi"><div class="v">${num(data.puissance_kw, 0)} kW</div><div class="l">Puissance</div></div>
-      <div class="panel kpi"><div class="v">${num(total / 1000, 1)} MWh</div><div class="l">Consommation</div></div>
-      <div class="panel kpi"><div class="v">${num(tons ? total / tons : null)} kWh/t</div><div class="l">Ratio</div></div>
-    </div>
-    <h2>kWh/t par poste</h2>
-    <div class="panel"><${Chart} area=${false} unit="kWh/t" series=${lines.map((l, i) => ({ color: colors[i % colors.length], points: data.par_shift.filter(s => s.line === l && s.kwh_per_t !== null).map(s => [new Date(s.starts_at).getTime(), s.kwh_per_t]) }))} />
-      <div class="legend">${lines.map((l, i) => html`<span><span class="badge" style=${{ background: colors[i % colors.length], color: "#fff" }}>${l}</span></span>`)}</div></div>
-    <h2>Compteurs</h2>
-    <div class="panel">${data.par_compteur.map(c => html`<div style="margin-bottom:8px">
-      <div class="row"><span>${c.compteur} <span class="muted">${[c.line, c.usage].filter(Boolean).join(" · ")}</span></span><span class="spacer"></span><span>${num(c.kwh, 0)} kWh</span></div>
-      <div class="bar"><div style=${{ width: ((c.kwh || 0) / maxK) * 100 + "%" }}></div></div></div>`)}
-      ${!data.par_compteur.length && html`<span class="muted">Aucun compteur.</span>`}</div>`;
-}
-
 // ----------------------------------------------------------------------------- catalogue
 function Catalog({ user }) {
   const [tab, setTab] = useState("decouverte");
@@ -340,16 +312,6 @@ function CsvIO() {
     </div>`;
 }
 
-// ----------------------------------------------------------------------------- analyse (Grafana)
-function Analysis() {
-  const theme = useTheme();
-  const dashes = [["mes-performance", "Performance et TRS"], ["mes-energie", "Énergie"], ["mes-tendances", "Tendances historian"], ["mes-collecte", "Santé de la collecte"]];
-  const [d, setD] = useState(dashes[0][0]);
-  return html`<div class="row"><h1>Analyse</h1><span class="spacer"></span><a class="btn" href="/grafana/" target="_blank" rel="noopener">Grafana ↗</a></div>
-    <div class="tabs">${dashes.map(([k, l]) => html`<button class=${d === k ? "on" : ""} onClick=${() => setD(k)}>${l}</button>`)}</div>
-    <iframe src=${`/grafana/d/${d}?kiosk&theme=${theme === "sombre" ? "dark" : "light"}`} style="width:100%;height:calc(100vh - 230px);border:1px solid var(--line);border-radius:10px;background:var(--card)"></iframe>`;
-}
-
 // ----------------------------------------------------------------------------- utilisateurs, journal
 function Users() {
   const list = useApi("/utilisateurs");
@@ -388,9 +350,9 @@ const PAGES = [
   ["arrets", "Arrêts", Stops, null, "outils"],
   ["alarmes", "Alarmes", Alarms, null, "outils"],
   ["moteurs", "Moteurs", Motors, null, "outils"],
-  ["energie", "Énergie", Energy, null, "outils"],
+  ["energie", "Énergie", Energie, null, "outils", true],
   ["recettes", "Recettes", Recettes, null, "outils", true],
-  ["analyse", "Analyse", Analysis, null, "outils"],
+  ["analyse", "Analyse", Analyse, null, "outils", true],
   ["catalogue", "Catalogue", Catalog, ["admin"], "reglages"],
   ["utilisateurs", "Utilisateurs", Users, ["admin"], "reglages"],
 ];

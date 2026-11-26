@@ -17,9 +17,9 @@ Application web en français (une seule adresse, comptes Active Directory ou loc
 | Postes et arrêts planifiés | Liste des postes générés automatiquement (3×8 par défaut), objectif, équipe, arrêts planifiés sur une plage horaire |
 | Alarmes | Alarmes en cours et historique, acquittement, recherche |
 | Moteurs | Vue des 100 moteurs colorée par dérive de courant, courbes, recalage de la référence après intervention |
-| Énergie | Puissance appelée, consommation par compteur, kWh/t par poste et par ligne |
+| Énergie | Sur une page : consommation en production et hors production (heure par heure ou jour par jour), gros consommateurs en anneau (par compteur, ligne ou usage), Pareto des compteurs, kWh/t par ligne |
 | Recettes | Création, duplication, versions avec validation, recherche (y compris par valeur de paramètre), comparaison avec la production en cours, chargement dans l'automate avec accusé de réception |
-| Analyse | Tableaux Grafana intégrés (performance, énergie, tendances historian, santé de la collecte), sans second mot de passe |
+| Analyse | Taux de disponibilité en tête, TRS, production, MTBF / MTTR, disponibilité par jour et par ligne, Pareto des arrêts, sur 7 ou 31 jours, usine ou ligne ; lien vers Grafana (tendances historian, santé de la collecte) sans second mot de passe |
 | Catalogue | Découverte automatique des machines de l'automate, attributs, import/export CSV des machines et des tags |
 | Paramètres, Utilisateurs | Seuils, rôles, comptes locaux, journal des actions |
 
