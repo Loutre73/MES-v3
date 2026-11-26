@@ -599,7 +599,7 @@ function App() {
         onClick=${e => { e.preventDefault(); setView(id); }}><${Icon} d=${icon} />${label}</a>`)}
       <div class="grp">Liens</div>
       <a href="/"><${Icon} d="M3 11l9-7 9 7v9H3z" />Application MES</a>
-      <div class="who">${d ? html`${d.user.display_name || d.user.username}<br />${admin ? "Actions autorisées" : "Lecture seule"} · <a href="#" onClick=${e => { e.preventDefault(); logout(); }}>Déconnexion</a>` : ""}</div>
+      <div class="who">${d ? html`${d.user.display_name || d.user.username}<br />${d.user.auth === false ? "Accès sans identifiant" : html`${admin ? "Actions autorisées" : "Lecture seule"} · <a href="#" onClick=${e => { e.preventDefault(); logout(); }}>Déconnexion</a>`}` : ""}</div>
     </nav>
     <main class="fit">
       <${Band} over="Console d'exploitation · MES v3" title=${title[0]} accent=${title.slice(1).join(" ")}>

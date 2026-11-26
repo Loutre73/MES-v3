@@ -102,6 +102,7 @@ Page web séparée **http://serveur/systeme** (hors de l'application MES, connex
 
 - **Historisation suspendue** : le collecteur reste connecté à l'automate et suit les valeurs, mais n'écrit plus dans l'historian ; arrêts, alarmes et KPI ne sont plus alimentés pendant ce temps. À la reprise, la dernière valeur de chaque tag est réécrite. L'état survit à un redémarrage du collecteur.
 - **Agent d'exploitation** (`ops/ops_agent.py`, bibliothèque standard Python) : indépendant de l'API, la console reste disponible application arrêtée. Il accède au socket Docker (équivalent root sur l'hôte) mais n'accepte qu'une liste fermée d'actions (démarrer, arrêter, redémarrer, journaux) sur les services du projet ; ni `web` ni la console ne peuvent être arrêtés depuis la console. Le collecteur (port 9109) et le simulateur (port 8090) exposent leur contrôle sur le réseau Docker seulement.
+- **Accès sans identifiant** : `AUTH_DISABLED=true` dans `site.env` (puis `./mesctl start`) ouvre l'application, Grafana et la console sans connexion, chaque visiteur étant administrateur. Pour un poste de développement ou une démonstration seulement, de préférence avec `WEB_BIND=127.0.0.1` pour que l'application ne soit joignable que depuis ce poste.
 - Sans session, la page affiche son propre formulaire de connexion (il nécessite l'API : si l'application est arrêtée et la session expirée, relancer avec `./mesctl start`).
 
 ## Supervision technique

@@ -87,6 +87,7 @@ services:
       AUTH_LDAP_GROUP_ROLES: ${AUTH_LDAP_GROUP_ROLES:-}
       SITE_TIMEZONE: ${SITE_TIMEZONE:-Europe/Paris}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
     volumes:
       - ${OPCUA_CERT_DIR:-./certs}:/certs:ro
     healthcheck:
@@ -103,7 +104,8 @@ services:
     build: ../web
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-80}:8080"
+      # WEB_BIND=127.0.0.1 : application joignable depuis ce poste seulement (conseillé avec AUTH_DISABLED)
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-80}:8080"
     depends_on:
       - api
       - grafana
@@ -119,6 +121,7 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       MES_VERSION: ${MES_VERSION:-dev}
       COMPOSE_PROJECT: mes
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
       HISTORIAN_RETENTION: ${HISTORIAN_RETENTION:-1 year}
       AGGREGATE_1MIN_RETENTION: ${AGGREGATE_1MIN_RETENTION:-1 year}
       AGGREGATE_1H_RETENTION: ${AGGREGATE_1H_RETENTION:-3 years}

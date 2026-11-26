@@ -44,3 +44,8 @@ def test_libelles_du_journal():
     assert agent.describe_hist({"actif": False, "duree_min": 15}) == "Historisation suspendue pour 15 min"
     assert agent.describe_hist({"actif": True}) == "Historisation reprise"
     assert agent.describe_hist({"dbs": {"DB_Process": False}}) == "Historisation suspendue pour DB_Process"
+
+
+def test_acces_sans_identifiant(monkeypatch):
+    monkeypatch.setattr(agent, "AUTH_DISABLED", True)
+    assert agent.read_session(None)["role"] == "admin"

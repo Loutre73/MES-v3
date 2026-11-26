@@ -626,7 +626,7 @@ function App() {
       <p class="grp">Outils</p>${group("outils")}
       <p class="grp">Réglages</p>${group("reglages")}
       <div class="who">${user.display_name || user.username}<br />${ROLE_LABEL[user.role] !== user.display_name ? html`${ROLE_LABEL[user.role]}<br />` : ""}
-        <a href="#" onClick=${e => { e.preventDefault(); api("/session", { method: "DELETE" }).finally(() => setUser(null)); }}>Se déconnecter</a>
+        ${user.auth === false ? html`<span>Accès sans identifiant</span>` : html`<a href="#" onClick=${e => { e.preventDefault(); api("/session", { method: "DELETE" }).finally(() => setUser(null)); }}>Se déconnecter</a>`}
         <div style="margin-top:8px">version ${user.version}</div></div></nav>
     ${page[5]
       ? html`<main class="fit"><${Comp} user=${user} route=${route} key=${page[0] + "/" + (route[1] || "")} /></main>`

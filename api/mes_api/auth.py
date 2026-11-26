@@ -70,7 +70,12 @@ def read_token(token: str) -> User | None:
     return User(data["u"], data["r"], data.get("n"))
 
 
+ANONYMOUS_ADMIN = User("admin", "admin", "Administrateur (accès libre)")
+
+
 def current_user(request: Request) -> User:
+    if settings.auth_disabled:
+        return ANONYMOUS_ADMIN
     token = request.cookies.get(COOKIE)
     user = read_token(token) if token else None
     if user is None:
