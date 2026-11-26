@@ -93,7 +93,7 @@ async def main() -> int:
             " end_offset => $3::text::interval, schedule_interval => $4::text::interval)", view, start, end, every)
         log.info("rafraîchissement de %s : fenêtre de %s", view, start)
 
-    # Purge à la demande et plafond de taille (0005_stockage.sql) : les données brutes ne sont jamais
+    # Purge à la demande et plafond de taille (0006_stockage.sql) : les données brutes ne sont jamais
     # purgées dans la fenêtre de recalcul des agrégats (plus une heure de marge).
     brut_min = await conn.fetchval(
         "SELECT greatest(interval '1 hour', $1::text::interval + interval '1 hour', $2::text::interval + interval '1 hour')::text",

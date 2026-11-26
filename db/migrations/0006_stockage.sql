@@ -1,4 +1,5 @@
 -- Maîtrise du volume de l'historian : état du stockage, purge à la demande, plafond de taille.
+-- (rejouable sans effet : sur les bases où elle a été appliquée sous le nom 0005_stockage)
 --
 -- Trois jeux de données : 'brut' (historian.value), '1min' (historian.value_1min), '1h' (historian.value_1h).
 -- Les paramètres (plafond, âges minimaux protégés) sont écrits par migrate.py à chaque démarrage.
