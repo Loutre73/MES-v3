@@ -88,6 +88,21 @@ Les versions sont publiées par la CI : un tag Git `v0.2.0` construit et pousse 
 - Entre deux changements, la valeur est la dernière connue : `historian.value_at(tag_id, instant)`, ou `locf()` dans les requêtes Grafana. Le collecteur réécrit la dernière valeur des tags immobiles toutes les 15 min pour borner ces recherches.
 - Une perte de connexion à l'automate écrit une valeur de qualité mauvaise pour chaque tag.
 
+## Console d'exploitation
+
+Console réservée aux administrateurs : **http://serveur/exploitation/**, et directement sur **http://serveur:8090/** (`OPS_PORT`), qui reste joignable quand l'application est arrêtée. Même session que l'application MES ; un compte local admin peut aussi s'y connecter.
+
+| Page | Contenu |
+| --- | --- |
+| Architecture | Schéma vivant : source OPC UA, collecteur, TimescaleDB, API, web, Grafana, Prometheus, exporteurs, colorés selon leur état, débit sur les flèches. Un clic ouvre le détail (métriques, journaux) et les commandes du composant. |
+| Services et commandes | Démarrer, redémarrer ou arrêter l'application (api, web, grafana : la base et le collecteur restent en service). Historisation globale (suspendre 15 min, 1 h ou jusqu'à réactivation). Stockage et prochaine purge. Tableau des services : état, CPU, mémoire, ancienneté, version, redémarrer / arrêter / journaux. Journal des opérations. |
+| Simulation | Règles du simulateur réglables à chaud (arrêts des moteurs et des lignes, dérives, bruit, taux de variation, période, accélération), gardées au redémarrage. Injection d'événements : défaut moteur, arrêt de ligne, micro-arrêts, dérive, pic de consommation, perte de communication, rafale. Données en direct (recherche de tag, tendance 10 min). Historisation par DB. |
+| Journal | Toutes les opérations de la console et de l'application (`mes.audit_log`). |
+
+Suspendre l'historisation garde la session OPC UA et les abonnements : seules les écritures dans l'historian sont retenues, et la dernière valeur de chaque tag est réécrite à la reprise. Le réglage est dans `mes.setting` (clé `historisation`).
+
+Le service `ops` pilote Docker par son socket, limité aux conteneurs du projet et aux actions start, stop, restart et journaux (jamais de suppression). L'accès au socket Docker équivaut à root sur l'hôte : la console est réservée au rôle admin et chaque action est journalisée. La base et la console elle-même ne s'arrêtent pas depuis la console (`./mesctl`).
+
 ## Supervision technique
 
 Page web séparée **http://serveur/systeme** (hors de l'application MES, connexion avec un compte MES ou AD) : tableau Grafana **Système - supervision technique** en plein écran, pour le développement et l'exploitation. Options d'URL : `?periode=6h&actualisation=5s`.

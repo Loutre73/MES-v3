@@ -45,7 +45,7 @@ get_images() {
   # Images de la version : en ligne depuis le registre, ou construites localement pour MES_VERSION=dev
   if [ "$(env_get MES_VERSION)" = "dev" ]; then
     local reg; reg=$(env_get MES_REGISTRY); reg=${reg:-ghcr.io/loutre73}
-    for i in collector api web migrate; do
+    for i in collector api web migrate ops; do
       docker image inspect "$reg/mes-$i:dev" >/dev/null 2>&1 || { compose --profile sim build; break; }
     done
   else
@@ -203,7 +203,7 @@ cmd_package() {
   # Construit l'archive hors ligne d'une version (sur le poste de build, pas sur site)
   local v=${1:-}; [ -n "$v" ] || fail "usage : ./mesctl package <version>"
   local reg; reg=$(env_get MES_REGISTRY 2>/dev/null || echo ghcr.io/loutre73); reg=${reg:-ghcr.io/loutre73}
-  local images="$reg/mes-collector:$v $reg/mes-migrate:$v $reg/mes-api:$v $reg/mes-web:$v $reg/mes-simulator:$v timescale/timescaledb:2.17.2-pg16 grafana/grafana-oss:11.3.0 prom/prometheus:v2.55.1 prom/node-exporter:v1.8.2 ncabatoff/process-exporter:0.8.7 python:3.12-slim prometheuscommunity/postgres-exporter:v0.16.0"
+  local images="$reg/mes-collector:$v $reg/mes-migrate:$v $reg/mes-api:$v $reg/mes-web:$v $reg/mes-ops:$v $reg/mes-simulator:$v timescale/timescaledb:2.17.2-pg16 grafana/grafana-oss:11.3.0 prom/prometheus:v2.55.1 prom/node-exporter:v1.8.2 ncabatoff/process-exporter:0.8.7 python:3.12-slim prometheuscommunity/postgres-exporter:v0.16.0"
   for i in $images; do docker image inspect "$i" >/dev/null 2>&1 || docker pull "$i"; done
   docker save -o "mes-images-$v.tar" $images
   say "Archive créée : mes-images-$v.tar"

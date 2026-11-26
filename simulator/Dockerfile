@@ -8,5 +8,5 @@ RUN --mount=type=secret,id=ca,required=false \
     pip install --no-cache-dir -r requirements.txt
 COPY simulator.py .
 COPY config ./config
-EXPOSE 4840
+EXPOSE 4840 8081
 CMD ["python", "simulator.py"]

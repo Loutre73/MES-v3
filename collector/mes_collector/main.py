@@ -14,6 +14,7 @@ from prometheus_client import start_http_server
 from . import metrics
 from .catalog import TagDef, bootstrap, fingerprint, load_tags
 from .config import Config
+from .suspension import KEY as SUSPENSION_KEY, Suspension, scope_of
 from .writer import Writer, now
 
 log = logging.getLogger("collector")
@@ -48,6 +49,8 @@ class Collector:
         self.last: dict[int, tuple[float | None, int, float]] = {}   # tag -> (valeur, qualité, instant d'écriture)
         self.handles: dict[int, tuple[object, int]] = {}            # tag -> (abonnement, handle serveur)
         self.subs: list = []
+        self.suspension = Suspension()
+        self.scope: dict[int, str] = {}                              # tag -> DB (périmètre de suspension)
 
     # --- notifications OPC UA -------------------------------------------------------------
     def datachange_notification(self, node, val, data) -> None:
@@ -72,6 +75,9 @@ class Collector:
         if prev is not None and prev[1] == quality and not tag.deadband.passes(prev[0], value):
             return
         self.last[tag_id] = (value, quality, time.monotonic())
+        if self.suspension.blocks(self.scope.get(tag_id, "")):
+            metrics.ROWS_SUSPENDED.inc()
+            return
         metrics.ROWS_STORED.inc()
         self.writer.put((ts, tag_id, value, quality))
 
@@ -146,9 +152,43 @@ class Collector:
             limit = time.monotonic() - self.cfg.keepalive_rewrite_s
             ts = now()
             for tag_id, (value, quality, written) in list(self.last.items()):
-                if written < limit:
+                if written < limit and not self.suspension.blocks(self.scope.get(tag_id, "")):
                     self.last[tag_id] = (value, quality, time.monotonic())
                     self.writer.put((ts, tag_id, value, quality))
+
+    async def suspension_loop(self) -> None:
+        """Suit le réglage d'historisation de la console d'exploitation (toutes les 5 s)."""
+        conn = None
+        while True:
+            try:
+                if conn is None or conn.is_closed():
+                    conn = await asyncpg.connect(self.cfg.database_url)
+                raw = await conn.fetchval("SELECT value FROM mes.setting WHERE key = $1", SUSPENSION_KEY)
+                resumed_global, resumed = self.suspension.update(raw)
+                metrics.HIST_SUSPENDED.set(1 if self.suspension.global_on else 0)
+                metrics.HIST_SCOPES_SUSPENDED.set(len(self.suspension.scopes))
+                if resumed_global or resumed:
+                    self.anchor(None if resumed_global else resumed)
+            except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError, ValueError) as e:
+                log.warning("lecture du réglage d'historisation impossible : %s", e)
+                conn = None
+            await asyncio.sleep(5)
+
+    def anchor(self, scopes: set[str] | None) -> None:
+        """À la reprise, réécrit la dernière valeur des tags concernés (None : tous les tags actifs)."""
+        ts = now()
+        n = 0
+        for tag_id, (value, quality, _) in list(self.last.items()):
+            scope = self.scope.get(tag_id, "")
+            if (scopes is None or scope in scopes) and not self.suspension.blocks(scope):
+                self.last[tag_id] = (value, quality, time.monotonic())
+                self.writer.put((ts, tag_id, value, quality))
+                n += 1
+        log.info("historisation reprise : %d dernières valeurs réécrites", n)
+
+    def set_tags(self, tags: dict[int, TagDef]) -> None:
+        self.tags = tags
+        self.scope = {t: scope_of(d.node_id, d.name) for t, d in tags.items()}
 
     async def catalog_loop(self, client: Client, fp) -> None:
         """Recharge le catalogue à chaud quand il change (ajout, retrait, deadband)."""
@@ -170,6 +210,7 @@ class Collector:
             removed = [t for t in self.tags if t not in tags]
             added = [t for t in tags if t not in self.tags]
             self.tags.update(tags)
+            self.scope.update({t: scope_of(d.node_id, d.name) for t, d in tags.items()})
             await self.unsubscribe(removed)
             for t in removed:
                 self.tags.pop(t, None)
@@ -203,7 +244,7 @@ class Collector:
                     if cfg.bootstrap_browse and (await fingerprint(conn))[0] == 0:
                         await bootstrap(client, conn, cfg.browse_root)
                     fp = await fingerprint(conn)
-                    self.tags = await load_tags(conn)
+                    self.set_tags(await load_tags(conn))
                 finally:
                     await conn.close()
                 self.by_node.clear()
@@ -229,6 +270,7 @@ class Collector:
     async def run(self) -> None:
         start_http_server(self.cfg.metrics_port)
         asyncio.create_task(self.writer.run())
+        asyncio.create_task(self.suspension_loop())
         delay = 2
         while True:
             try:

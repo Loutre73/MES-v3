@@ -108,6 +108,34 @@ services:
       - api
       - grafana
 
+  # Console d'exploitation : services Docker, historisation, architecture, simulation (rôle admin).
+  # Pilote Docker par son socket (start, stop, restart, journaux du projet seulement) :
+  # équivalent root sur l'hôte. Port publié pour rester joignable quand l'application est arrêtée.
+  ops:
+    image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-ops:${MES_VERSION:-dev}
+    build: ../ops
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://mes:${DB_PASSWORD}@db:5432/mes
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY manquant dans site.env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      MES_VERSION: ${MES_VERSION:-dev}
+      OPCUA_ENDPOINT: ${OPCUA_ENDPOINT}
+      OPS_PORT: ${OPS_PORT:-8090}
+      COMPOSE_PROJECT: mes
+    ports:
+      - "${OPS_PORT:-8090}:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/api/sante', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   grafana:
     image: grafana/grafana-oss:11.3.0
     restart: unless-stopped
@@ -147,6 +175,10 @@ services:
     environment:
       SIM_TOTAL_TAGS: ${SIM_TOTAL_TAGS:-10000}
       SIM_CHANGE_RATIO: ${SIM_CHANGE_RATIO:-0.3}
+      SIM_STATE_DIR: /data
+    # règles modifiées depuis la console d'exploitation (API de contrôle sur le port 8081, réseau interne)
+    volumes:
+      - simulator-data:/data
 
   # ---- Surveillance technique (profil "monitoring") : tableau de bord Grafana « Système » ----
   # Prometheus collecte toutes les 10 s ; volume plafonné par PROMETHEUS_RETENTION_SIZE.
@@ -218,3 +250,4 @@ volumes:
   collector-spool:
   grafana-data:
   prometheus-data:
+  simulator-data:
