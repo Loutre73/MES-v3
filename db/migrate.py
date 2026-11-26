@@ -52,7 +52,11 @@ async def main() -> int:
     }
     for rel, keep in policies.items():
         await conn.execute("SELECT remove_retention_policy($1::regclass, if_exists => true)", rel)
-        await conn.execute("SELECT add_retention_policy($1::regclass, $2::text::interval)", rel, keep)
+        # une conservation courte (poste de développement) est purgée toutes les heures, sinon une fois par jour
+        await conn.execute(
+            """SELECT add_retention_policy($1::regclass, $2::text::interval,
+                 schedule_interval => CASE WHEN $2::text::interval < interval '2 days' THEN interval '1 hour' ELSE interval '1 day' END)""",
+            rel, keep)
         log.info("conservation de %s : %s", rel, keep)
 
     pwd = os.environ.get("MES_READER_PASSWORD")
