@@ -163,7 +163,7 @@ export function Synthese({ user }) {
       </${Tile}>
 
       <${Tile} id="poste" title="Poste & recettes" col="span 3" ...${tiles} detail=${html`<${ShiftDetail} lines=${lines} />`}>
-        ${shiftLine ? html`<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><b style="font-size:18px">${shiftLine.shift_label}</b>
+        ${shiftLine ? html`<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><b style="font-size:18px">${shiftLine.shift_label || "Poste en cours"}</b>
           <span class="sub">${hm(shiftLine.starts_at)}–${hm(shiftLine.ends_at)} · fin dans ${dur((T(shiftLine.ends_at) - Date.now()) / 1000)}</span></div>` : html`<p class="empty">Aucun poste en cours.</p>`}
         <div class="lst scroll" style="flex:1">
           ${lines.map(l => html`<div><span class="t">${l.name}</span><span class="sub">${l.team ? "Équipe " + l.team : "Équipe ?"}</span><span class="spacer"></span><span class="sub">${l.recipe_label || ""}</span></div>`)}

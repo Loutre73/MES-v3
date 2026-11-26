@@ -107,6 +107,23 @@ Page web séparée **http://serveur/systeme** (hors de l'application MES, connex
 - **Accès sans identifiant** : `AUTH_DISABLED=true` dans `site.env` (puis `./mesctl start`) ouvre l'application, Grafana et la console sans connexion, chaque visiteur étant administrateur. Pour un poste de développement ou une démonstration seulement, de préférence avec `WEB_BIND=127.0.0.1` pour que l'application ne soit joignable que depuis ce poste.
 - Sans session, la page affiche son propre formulaire de connexion (il nécessite l'API : si l'application est arrêtée et la session expirée, relancer avec `./mesctl start`).
 
+## Poste Mac (Colima) sans ligne de commande
+
+Sur un Mac, le MES tourne dans la machine virtuelle Colima, que la console /systeme ne peut pas piloter
+(elle tourne dedans). L'agent Mac (`deploy/mac/`) s'en charge : double-cliquer sur
+`deploy/mac/Installer l'agent Mac.command` dans le Finder, puis ouvrir http://localhost:9300
+(raccourci « Poste Mac MES » sur le Bureau, lien « Poste Mac » dans la console).
+
+- Colima : état, démarrer, arrêter (MES arrêté proprement avant), redémarrer, démarrage automatique à l'ouverture de session.
+- Place disque : disque de Colima et du Mac, alertes à 80 % et 90 % (notification macOS), ménage Docker,
+  « Rendre la place au Mac » (fstrim).
+- Agrandir le disque (jamais en dessous de 5 Go libres sur le Mac), processeurs et mémoire.
+- Réglages de conservation (historian, plafond de taille, Prometheus) écrits dans site.env, copie avant chaque changement.
+- Surveillance technique on/off, remise à l'heure après une veille, journal des opérations.
+
+Sécurité : écoute 127.0.0.1 seulement, en-tête Host vérifié, clé propre à la page, liste fermée d'actions bornées.
+Retrait : `Désinstaller l'agent Mac.command`.
+
 ## Supervision technique
 
 Tableau Grafana **Système - supervision technique**, dans l'onglet « Supervision Grafana » de la console, pour le développement et l'exploitation.

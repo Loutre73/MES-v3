@@ -140,15 +140,17 @@ async def list_shifts(line_id: int | None = None, depuis: datetime | None = None
         return db.rows(await conn.fetch(
             """SELECT s.id, s.line_id, m.name AS line, s.starts_at, s.ends_at, s.team, s.target_t, s.comment, t.label, t.code AS template,
                       s.kind, s.recipe_id, r.code AS recipe_code, r.label AS recipe_label, k.tonnage_t, k.availability, k.performance, k.oee, k.energy_kwh, k.kwh_per_t, k.final,
-                      k.stop_count, k.unqualified_count, k.planned_stop_s, k.unplanned_stop_s, k.run_s
+                      k.stop_count, k.unqualified_count, k.planned_stop_s, k.unplanned_stop_s, k.run_s,
+                      coalesce((SELECT json_agg(json_build_object('id', p.id, 'type', p.type, 'starts_at', p.starts_at, 'ends_at', p.ends_at,
+                                                'reason', p.reason) ORDER BY p.starts_at)
+                                FROM mes.planned_stop p WHERE p.shift_id = s.id), '[]') AS stops
                FROM mes.shift s JOIN catalog.machine m ON m.id = s.line_id LEFT JOIN mes.shift_template t ON t.id = s.template_id
                LEFT JOIN mes.shift_kpi k ON k.shift_id = s.id LEFT JOIN mes.recipe r ON r.id = s.recipe_id
                WHERE s.starts_at >= $1 AND s.starts_at < $1 + make_interval(days => $2) AND ($3::int IS NULL OR s.line_id = $3)
                ORDER BY s.starts_at, m.name""", start, jours, line_id))
 
 
-KINDS = ("production", "maintenance", "arret")
-PLAN_FIELDS = ("team", "target_t", "comment", "kind", "recipe_id")
+PLAN_FIELDS = ("team", "target_t", "comment", "recipe_id")
 
 
 class ShiftPatch(BaseModel):
@@ -156,7 +158,6 @@ class ShiftPatch(BaseModel):
     team: str | None = None
     target_t: float | None = None
     comment: str | None = None
-    kind: str | None = None
     recipe_id: int | None = None
 
 
@@ -169,51 +170,20 @@ async def _recompute(conn, sid: int) -> None:
 @router.patch("/shifts/{sid}")
 async def patch_shift(sid: int, body: ShiftPatch, user: User = Depends(require("chef_equipe"))):
     changes = body.model_dump(exclude_unset=True)
-    if "kind" in changes and changes["kind"] not in KINDS:
-        raise HTTPException(400, "Type de poste : production, maintenance ou arret")
-    if changes.get("kind") is None:
-        changes.pop("kind", None)
     async with db.pool().acquire() as conn:
         s = await conn.fetchrow("SELECT starts_at, ends_at FROM mes.shift WHERE id = $1", sid)
         if s is None:
             raise HTTPException(404, "Poste introuvable")
-        # le contenu planifié (recette, type) d'un poste terminé n'est plus modifiable ; l'équipe, l'objectif
+        # la recette d'un poste terminé n'est plus modifiable ; l'équipe, l'objectif
         # et le commentaire restent corrigeables pour le calcul des KPI
-        if s["ends_at"] <= datetime.now(timezone.utc) and ({"kind", "recipe_id"} & changes.keys()):
-            raise HTTPException(409, "Poste terminé : son contenu planifié n'est plus modifiable")
+        if s["ends_at"] <= datetime.now(timezone.utc) and "recipe_id" in changes:
+            raise HTTPException(409, "Poste terminé : sa recette n'est plus modifiable")
         if changes:
             cols = [c for c in PLAN_FIELDS if c in changes]
             sets = ", ".join(f"{c} = ${i + 2}" for i, c in enumerate(cols))
             await conn.execute(f"UPDATE mes.shift SET {sets} WHERE id = $1", sid, *[changes[c] for c in cols])
             await _recompute(conn, sid)
         await db.audit(conn, user.username, "shift_modifie", "shift", sid, changes)
-    return {"ok": True}
-
-
-class SwapBody(BaseModel):
-    a: int
-    b: int
-
-
-@router.post("/shifts/echanger")
-async def swap_shifts(body: SwapBody, user: User = Depends(require("chef_equipe"))):
-    """Échange le contenu planifié (équipe, objectif, recette, type, commentaire) de deux postes à venir."""
-    if body.a == body.b:
-        return {"ok": True}
-    async with db.pool().acquire() as conn, conn.transaction():
-        rows = {r["id"]: r for r in await conn.fetch(
-            "SELECT * FROM mes.shift WHERE id = ANY($1::int[]) FOR UPDATE", [body.a, body.b])}
-        if len(rows) != 2:
-            raise HTTPException(404, "Poste introuvable")
-        now = datetime.now(timezone.utc)
-        if any(r["starts_at"] <= now for r in rows.values()):
-            raise HTTPException(409, "Un poste commencé ou passé ne peut pas être déplacé")
-        for dst, src in ((body.a, body.b), (body.b, body.a)):
-            r = rows[src]
-            await conn.execute(
-                "UPDATE mes.shift SET team = $2, target_t = $3, comment = $4, kind = $5, recipe_id = $6 WHERE id = $1",
-                dst, r["team"], r["target_t"], r["comment"], r["kind"], r["recipe_id"])
-        await db.audit(conn, user.username, "shifts_echanges", "shift", body.a, {"avec": body.b})
     return {"ok": True}
 
 
@@ -403,7 +373,7 @@ async def trend(tag_id: int, minutes: int = 60, _: User = Depends(current_user))
 @router.get("/parametres")
 async def get_settings(_: User = Depends(current_user)):
     async with db.pool().acquire() as conn:
-        return {r["key"]: r["value"] for r in await conn.fetch("SELECT key, value FROM mes.setting ORDER BY key")}
+        return {r["key"]: r["value"] for r in await conn.fetch("SELECT key, value FROM mes.setting WHERE key NOT LIKE 'planning\\_%' ORDER BY key")}  # planning : réglé depuis la vue Planning
 
 
 @router.put("/parametres/{key}")

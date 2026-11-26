@@ -641,6 +641,11 @@ function App() {
     addEventListener("hashchange", f);
     return () => removeEventListener("hashchange", f);
   }, []);
+  // Agent Mac (Colima) : lien affiché seulement si l'agent répond sur ce poste
+  const [posteMac, setPosteMac] = useState(null);
+  useEffect(() => {
+    fetch("http://localhost:9300/api/ping").then(r => r.json()).then(j => setPosteMac(j.url)).catch(() => {});
+  }, []);
   const d = st.data;
   const admin = !!(d && d.user.admin);
   const title = VIEWS.find(v => v[0] === view)[1].split(" ");
@@ -653,6 +658,7 @@ function App() {
         onClick=${e => { e.preventDefault(); setView(id); }}><${Icon} d=${icon} />${label}</a>`)}
       <div class="grp">Liens</div>
       <a href="/"><${Icon} d="M3 11l9-7 9 7v9H3z" />Application MES</a>
+      ${posteMac && html`<a href=${posteMac} target="_blank" rel="noopener"><${Icon} d="M4 5h16v11H4zM8 20h8M12 16v4" />Poste Mac (Colima)</a>`}
       <div class="who">${d ? html`${d.user.display_name || d.user.username}<br />${d.user.auth === false ? "Accès sans identifiant" : html`${admin ? "Actions autorisées" : "Lecture seule"} · <a href="#" onClick=${e => { e.preventDefault(); logout(); }}>Déconnexion</a>`}` : ""}</div>
     </nav>
     <main class="fit">
