@@ -175,3 +175,18 @@ def test_exemples_valides_et_persistance(tmp_path):
         p2.engine.start(sid, p2.clock)
     for _ in range(5):
         p2.step(1.0)
+
+
+def test_debit_des_lignes_et_tonnage():
+    p = make_plant()
+    p.engine.load()
+    assert p.engine.count("debits") == {"instances": 3, "tags": 3}
+    p.step(1.0)
+    L1 = p.by_name["L1"].vars
+    base = L1["Debit_th"].raw
+    run(p, "s", {"nom": "x", "duree_s": 600, "regles": [
+        {"effet": "facteur", "cible": "debits", "params": {"facteur": 0.5}, "debut_s": 0, "duree_s": 600}]}, steps=2)
+    assert L1["Debit_th"].value == pytest.approx(base * 0.5, abs=0.1)
+    t0 = L1["Tonnage_t"].value
+    p.step(3600.0)          # le tonnage suit le débit réduit
+    assert L1["Tonnage_t"].value - t0 == pytest.approx(base * 0.5, rel=0.05)

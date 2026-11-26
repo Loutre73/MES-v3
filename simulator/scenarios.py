@@ -423,6 +423,7 @@ def seed(instances) -> dict:
     groups = {
         "courants": {"nom": "Courant des moteurs", "type": "moteur", "membres": ["Courant"]},
         "lignes": {"nom": "Toutes les lignes", "type": "ligne"},
+        "debits": {"nom": "Débit des lignes", "type": "ligne", "membres": ["Debit_th"]},
         "ligne-1": {"nom": f"Ligne {L}", "type": "ligne", "instances": L},
         "moteur-1": {"nom": f"Moteur {M}", "type": "moteur", "instances": M},
         "puissances": {"nom": "Puissance des compteurs", "type": "compteur_energie", "membres": ["Puissance_kW"]},
@@ -445,6 +446,8 @@ def seed(instances) -> dict:
             {"effet": "coupure", "debut_s": 0, "duree_s": 60}]},
         "cascade": {"nom": "Panne en cascade", "duree_s": 3600, "regles": [
             {"effet": "rampe", "cible": courant_m, "params": {"pct": 20}, "debut_s": 0, "duree_s": 900},
+            {"effet": "facteur", "cible": {"type": "ligne", "instances": L, "membres": ["Debit_th"]},
+             "params": {"facteur": 0.7}, "debut_s": 300, "duree_s": 600},
             {"effet": "defaut", "cible": "moteur-1", "debut_s": 900, "duree_s": 600},
             {"effet": "arret", "cible": "ligne-1", "params": {"code": 7}, "debut_s": 900, "duree_s": 1020},
             {"effet": "facteur", "cible": "puissances", "params": {"facteur": 0.6}, "debut_s": 900, "duree_s": 1020},
