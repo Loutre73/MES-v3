@@ -2,7 +2,7 @@
 // production par heure, recette planifiée comparée à la production, alarmes. La vue tient dans la hauteur de l'écran.
 import { html, useState, useEffect } from "./vendor/preact-htm.module.js";
 import {
-  api, useApi, Msg, Band, Tile, Pill, Frise, Ticks, Bars, Icon, ICON, useToast, lineState, oeeKind, can,
+  api, useApi, Msg, Band, Tile, Pill, Frise, Ticks, Bars, Chart, Info, Icon, ICON, useToast, lineState, oeeKind, can,
   hm, num, pct, dur, dt, toLocalInput, fromLocalInput, fmtDay,
 } from "./lib.js";
 
@@ -20,6 +20,7 @@ export function Ligne({ user, route }) {
   const causes = useApi("/arrets/causes");
   const [open, setOpen] = useState(null);
   const [sel, setSel] = useState(null);
+  const [prodView, setProdView] = useState("debit");
   const [toast, showToast] = useToast();
   const d = detail.data;
 
@@ -65,11 +66,12 @@ export function Ligne({ user, route }) {
     <article class="tile" style="flex:none;gap:8px">
       <div class="th">
         <h2>Frise du poste</h2>
-        ${s && html`<span class="sub">${s.label || "Poste"} du ${fmtDay.format(new Date(s.starts_at))}, ${hm(s.starts_at)}–${hm(s.ends_at)}${s.team ? " · équipe " + s.team : ""}${s.recipe_label ? " · " + s.recipe_label : ""}</span>`}
+        ${s && html`<span class="sub">${fmtDay.format(new Date(s.starts_at))} · ${hm(s.starts_at)}–${hm(s.ends_at)}</span>
+          ${s.team && html`<${Pill} kind="info">${s.team}</${Pill}>`}${s.recipe_label && html`<${Pill} kind="idle">${s.recipe_label}</${Pill}>`}`}
         <span class="spacer"></span>
-        <div class="legend"><span><i style="background:var(--green)"></i>Marche</span><span><i style="background:var(--orange)"></i>Ralenti</span>
+        <${Info} label="Légende"><div class="legend"><span><i style="background:var(--green)"></i>Marche</span><span><i style="background:var(--orange)"></i>Ralenti</span>
           <span><i style="background:var(--red)"></i>Arrêt qualifié</span><span><i style="background:repeating-linear-gradient(135deg,var(--red) 0 3px,#FF8A80 3px 6px)"></i>À qualifier</span>
-          <span><i style="background:repeating-linear-gradient(135deg,var(--muted) 0 3px,var(--fill) 3px 6px)"></i>Planifié</span></div>
+          <span><i style="background:repeating-linear-gradient(135deg,var(--muted) 0 3px,var(--fill) 3px 6px)"></i>Planifié</span></div></${Info}>
         <button type="button" class="xb" disabled=${!d.navigation.precedent} onClick=${() => go(d.navigation.precedent)} aria-label="Poste précédent" title="Poste précédent"><${Icon} d=${ICON.back} /></button>
         <button type="button" class="xb" disabled=${!d.navigation.suivant} onClick=${() => go(d.navigation.suivant)} aria-label="Poste suivant" title="Poste suivant"><${Icon} d=${ICON.next} /></button>
       </div>
@@ -77,25 +79,30 @@ export function Ligne({ user, route }) {
         <${Ticks} start=${s.starts_at} end=${s.ends_at} every=${1} />
         <${StopPanel} stop=${selStop} todo=${todo} stops=${stops} causes=${causes.data || []} user=${user}
           onSelect=${setSel} onQualify=${qualify} onSplit=${() => { detail.reload(); showToast("Arrêt découpé : qualifiez les deux parties."); }} onError=${e => showToast(e, true)} />`
-        : html`<p class="empty">Aucun poste pour cette ligne. Les postes sont créés automatiquement à partir des modèles (Matin, Après-midi, Nuit).</p>`}
+        : html`<p class="empty">Aucun poste. <a href="#/planning">Planning →</a></p>`}
     </article>
 
     <section class="tiles" style="grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)">
-      <${Tile} id="syno" title="Synoptique · moteurs de la ligne" open=${open} onToggle=${setOpen} cls="syno" col="1 / 2" row="1 / 3"
+      <${Tile} id="syno" title="Moteurs" open=${open} onToggle=${setOpen} cls="syno" col="1 / 2" row="1 / 3"
         detail=${html`<${Synoptic} motors=${d.moteurs} big />`}>
         <${Synoptic} motors=${d.moteurs} />
       </${Tile}>
-      <${Tile} id="prod" title="Production par heure" open=${open} onToggle=${setOpen} col="2 / 4" row="1 / 2"
+      <${Tile} id="prod" title=${prodView === "debit" ? "Débit" : "Production par heure"} open=${open} onToggle=${setOpen} col="2 / 4" row="1 / 2"
+        extra=${html`<div class="seg light" role="group" aria-label="Vue"><button type="button" class=${prodView === "debit" ? "on" : ""} onClick=${() => setProdView("debit")}>t/h</button>
+          <button type="button" class=${prodView === "prod" ? "on" : ""} onClick=${() => setProdView("prod")}>t</button></div>
+          <${Info}>${prodView === "debit" ? html`Débit moyen par 5 min (t/h). Tirets : cadence nominale${l.cadence_nominale_th ? ` (${num(l.cadence_nominale_th, 0)} t/h)` : ""}.` : html`Barres : tonnes produites. Tirets : objectif horaire${s?.target_t ? ` (${num(s.target_t / Math.max(1, d.production_h.length), 0)} t/h)` : ""}.`}</${Info}>`}
         detail=${html`<${ProdDetail} rows=${d.production_h} />`}>
-        <div style="flex:1;min-height:0"><${Bars} data=${d.production_h.map(r => ({ label: hm(r.h).slice(0, 2) + "h", v: r.t, target: r.objectif,
-          color: r.t === null ? "var(--fill)" : r.objectif && r.t < 0.9 * r.objectif ? "var(--orange)" : "var(--green)" }))} unit="t" labelEvery=${1} /></div>
-        <span class="sub">Barres : tonnes produites ; tirets : objectif horaire${s?.target_t ? ` (${num(s.target_t / Math.max(1, d.production_h.length), 0)} t/h)` : ""}.</span>
+        ${prodView === "debit" ? html`<div style="flex:1;min-height:0;display:flex"><${Chart} height=${null} unit="t/h" empty="Pas de débit sur ce poste."
+          series=${[{ points: (d.debit || []).map(r => [T(r.t), r.v]), color: "var(--green)" }]}
+          bands=${l.cadence_nominale_th ? [{ y: l.cadence_nominale_th, color: "var(--text2)", label: "Nominal " + num(l.cadence_nominale_th, 0) }] : []} /></div>`
+        : html`<div style="flex:1;min-height:0"><${Bars} data=${d.production_h.map(r => ({ label: hm(r.h).slice(0, 2) + "h", v: r.t, target: r.objectif,
+          color: r.t === null ? "var(--fill)" : r.objectif && r.t < 0.9 * r.objectif ? "var(--orange)" : "var(--green)" }))} unit="t" labelEvery=${1} /></div>`}
       </${Tile}>
       <${Tile} id="recette" title="Recette vs réel" open=${open} onToggle=${setOpen} col="2 / 3" row="2 / 3"
         detail=${html`<${RecipeCompare} shift=${s} big />`}>
         <${RecipeCompare} shift=${s} />
       </${Tile}>
-      <${Tile} id="alarmes" title="Alarmes de la ligne" open=${open} onToggle=${setOpen} col="3 / 4" row="2 / 3"
+      <${Tile} id="alarmes" title="Alarmes" open=${open} onToggle=${setOpen} col="3 / 4" row="2 / 3"
         extra=${d.alarmes.length ? html`<${Pill} kind="bad">${d.alarmes.length}</${Pill}>` : ""}
         detail=${html`<${AlarmList} alarms=${d.alarmes} onAck=${async id => { await api(`/alarmes/${id}/acquitter`, { method: "POST" }); detail.reload(); }} big />`}>
         <${AlarmList} alarms=${d.alarmes} onAck=${async id => { await api(`/alarmes/${id}/acquitter`, { method: "POST" }); detail.reload(); }} />
@@ -111,7 +118,7 @@ function StopPanel({ stop, todo, stops, causes, user, onSelect, onQualify, onSpl
   const [other, setOther] = useState("");
   const [cut, setCut] = useState(null);
   useEffect(() => { setComment(stop?.comment || ""); setOther(""); setCut(null); }, [stop?.id]);
-  if (!stop) return html`<div class="lst"><div><span class="sub">${todo.length ? "Sélectionnez un arrêt sur la frise pour le qualifier." : "Aucun arrêt à qualifier sur ce poste."}</span></div></div>`;
+  if (!stop) return html`<div class="lst"><div>${todo.length ? html`<${Pill} kind="warn">${todo.length} à qualifier</${Pill}><span class="sub">Touchez un arrêt sur la frise.</span>` : html`<${Pill} kind="good">Tout est qualifié</${Pill}>`}</div></div>`;
   const i = stops.findIndex(x => x.id === stop.id);
   const quick = QUICK.map(c => causes.find(x => x.code === c)).filter(Boolean);
   const canSplit = can(user, "chef_equipe", "operateur") && stop.ends_at;
@@ -123,24 +130,23 @@ function StopPanel({ stop, todo, stops, causes, user, onSelect, onQualify, onSpl
     <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
       <div style="display:flex;align-items:center;gap:8px"><b style="font-size:18px" class="num">${hm(stop.starts_at)} → ${stop.ends_at ? hm(stop.ends_at) : "en cours"}</b>
         ${stop.planned ? html`<${Pill} kind="idle">Planifié</${Pill}>` : stop.cause_id ? html`<${Pill} kind="good">${stop.cause}</${Pill}>` : html`<${Pill} kind="warn">À qualifier</${Pill}>`}</div>
-      <span class="sub">Durée ${dur(stop.duree_s)} · code automate ${stop.plc_code ?? "–"}${stop.qualified_by ? " · par " + stop.qualified_by : ""}</span>
+      <span class="sub num">${dur(stop.duree_s)}${stop.plc_code !== null && stop.plc_code !== undefined ? " · code " + stop.plc_code : ""}${stop.qualified_by ? " · " + stop.qualified_by : ""}</span>
       <div class="row" style="gap:6px;margin-top:auto">
-        <button type="button" disabled=${i <= 0} onClick=${() => onSelect(stops[i - 1].id)}><${Icon} d=${ICON.back} size="14" />Précédent</button>
-        <button type="button" disabled=${i >= stops.length - 1} onClick=${() => onSelect(stops[i + 1].id)}>Suivant<${Icon} d=${ICON.next} size="14" /></button>
-        ${canSplit && html`<button type="button" onClick=${() => setCut(cut ? null : toLocalInput(new Date((T(stop.starts_at) + T(stop.ends_at)) / 2)))}><${Icon} d=${ICON.cut} size="14" />Découper</button>`}
+        <button type="button" class="iconbtn" disabled=${i <= 0} onClick=${() => onSelect(stops[i - 1].id)} aria-label="Arrêt précédent" title="Arrêt précédent"><${Icon} d=${ICON.back} /></button>
+        <button type="button" class="iconbtn" disabled=${i >= stops.length - 1} onClick=${() => onSelect(stops[i + 1].id)} aria-label="Arrêt suivant" title="Arrêt suivant"><${Icon} d=${ICON.next} /></button>
+        ${canSplit && html`<button type="button" class=${"iconbtn" + (cut ? " dark" : "")} onClick=${() => setCut(cut ? null : toLocalInput(new Date((T(stop.starts_at) + T(stop.ends_at)) / 2)))} aria-label="Découper" title="Découper"><${Icon} d=${ICON.cut} /></button>`}
+        ${todo.length > 0 && html`<span class="spacer"></span><${Pill} kind="warn">${todo.length} à qualifier</${Pill}>`}
       </div>
       ${cut && html`<div class="row" style="gap:6px"><input type="datetime-local" value=${cut} onInput=${e => setCut(e.target.value)} aria-label="Instant de découpe" />
-        <button class="dark" onClick=${doCut}>Découper ici</button></div>`}
+        <button class="dark" onClick=${doCut}>Découper</button></div>`}
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
-      <span class="sub" style="font-weight:600">Cause de l'arrêt</span>
       <div class="chips">
         ${quick.map(c => html`<button type="button" class=${"chip" + (stop.cause_id === c.id ? " on" : "")} disabled=${stop.planned} onClick=${() => onQualify(stop, c.id, comment)}>${c.label}</button>`)}
         <select value=${other} disabled=${stop.planned} onChange=${e => { setOther(e.target.value); if (e.target.value) onQualify(stop, +e.target.value, comment); }} aria-label="Autre cause">
-          <option value="">Autre cause…</option>${causes.filter(c => !QUICK.includes(c.code)).map(c => html`<option value=${c.id}>${c.label}</option>`)}</select>
+          <option value="">Autre…</option>${causes.filter(c => !QUICK.includes(c.code)).map(c => html`<option value=${c.id}>${c.label}</option>`)}</select>
       </div>
-      <input placeholder="Commentaire (facultatif), enregistré avec la cause" value=${comment} onInput=${e => setComment(e.target.value)} disabled=${stop.planned} />
-      <span class="sub">${todo.length ? `${todo.length} arrêt${todo.length > 1 ? "s" : ""} à qualifier sur ce poste ; après qualification, la frise passe au suivant.` : "Tous les arrêts du poste sont qualifiés."}</span>
+      <input placeholder="Commentaire" value=${comment} onInput=${e => setComment(e.target.value)} disabled=${stop.planned} />
     </div>
   </div>`;
 }
@@ -150,7 +156,7 @@ function Synoptic({ motors, big = false }) {
   const [sel, setSel] = useState(null);
   const m = motors.find(x => x.id === sel) || motors[0];
   const trend = useApi(m && m.tag_courant ? `/tendance/${m.tag_courant}?minutes=1440` : null, [m?.id], 120000);
-  if (!motors.length) return html`<p class="empty">Aucun moteur rattaché à cette ligne. Renseignez l'attribut « ligne » des moteurs dans le Catalogue.</p>`;
+  if (!motors.length) return html`<p class="empty">Aucun moteur rattaché. <a href="#/catalogue">Catalogue →</a></p>`;
   const list = big ? motors : motors.slice(0, 6);
   return html`<div style="display:flex;flex-direction:column;gap:8px;flex:1;min-height:0">
     <div style=${{ display: "grid", gridTemplateColumns: `repeat(${big ? 6 : 3}, minmax(0, 1fr))`, gap: "6px" }}>
@@ -160,10 +166,12 @@ function Synoptic({ motors, big = false }) {
         <span style="font-size:12px;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.name}</span>
         <span class="num" style=${{ fontSize: "14px", fontWeight: 800, color: KIND_COLOR[k] }}>${x.deviation_pct === null || x.deviation_pct === undefined ? DRIFT_LABEL[x.status || "sans_reference"] : (x.deviation_pct > 0 ? "+" : "") + num(x.deviation_pct) + " %"}</span></button>`; })}
     </div>
-    <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">${m.name}</b><span class="sub">courant 24 h, bande ±10 % autour de la référence ${num(m.ref_current)} A</span></div>
-    <div style="flex:1;min-height:70px"><${Current} points=${trend.data?.points || []} refc=${m.ref_current} /></div>
-    <div class="row" style="gap:8px"><span class="sub" style="flex:1">${diagnosis(m)}</span>
-      <a class="btn" href="#/moteurs">Recaler la référence</a><a class="btn" href="#/analyse">Ouvrir dans Analyse</a></div>
+    <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">${m.name}</b>
+      <span class="sub num">${num(m.mean_current)} A</span>
+      <${Pill} kind=${DRIFT_KIND[m.status || "sans_reference"]}>${m.deviation_pct === null || m.deviation_pct === undefined ? DRIFT_LABEL[m.status || "sans_reference"] : (m.deviation_pct > 0 ? "+" : "") + num(m.deviation_pct) + " %"}</${Pill}>
+      <span class="spacer"></span><${Info}>Courant sur 24 h. Bande verte : ±10 % autour de la référence.<br />${diagnosis(m)}</${Info}>
+      <a class="btn iconbtn" href="#/moteurs" title="Moteurs" aria-label="Moteurs"><${Icon} d=${ICON.link} /></a></div>
+    <div style="flex:1;min-height:90px;display:flex"><${Current} points=${trend.data?.points || []} refc=${m.ref_current} kind=${DRIFT_KIND[m.status || "sans_reference"]} /></div>
   </div>`;
 }
 
@@ -175,20 +183,12 @@ function diagnosis(m) {
   return "Courant dans la bande de référence.";
 }
 
-function Current({ points, refc }) {
-  if (!points.length) return html`<p class="empty">Pas de mesure sur 24 h.</p>`;
-  const W = 600, H = 120;
-  const xs = points.map(p => T(p[0])), ys = points.map(p => p[1]).filter(v => v !== null);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs, x0 + 1);
-  let y0 = Math.min(...ys, refc ? refc * 0.85 : Infinity), y1 = Math.max(...ys, refc ? refc * 1.15 : -Infinity);
-  if (y1 <= y0) { y1 = y0 + 1; }
-  const X = t => ((t - x0) / (x1 - x0)) * W, Y = v => H - 4 - ((v - y0) / (y1 - y0)) * (H - 8);
-  return html`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block" role="img" aria-label="Courant moteur 24 h">
-    ${refc && html`<rect x="0" width=${W} y=${Y(refc * 1.1)} height=${Y(refc * 0.9) - Y(refc * 1.1)} style=${{ fill: "var(--green-t)" }} />
-      <line x1="0" x2=${W} y1=${Y(refc)} y2=${Y(refc)} style=${{ stroke: "var(--green-fg)" }} stroke-dasharray="4 3" vector-effect="non-scaling-stroke" />`}
-    <polyline fill="none" style=${{ stroke: "var(--primary)" }} stroke-width="2" vector-effect="non-scaling-stroke"
-      points=${points.filter(p => p[1] !== null).map(p => `${X(T(p[0])).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ")} />
-  </svg>`;
+function Current({ points, refc, kind }) {
+  const col = { good: "var(--green-fg)", warn: "var(--orange)", bad: "var(--red)", idle: "var(--primary)" }[kind] || "var(--primary)";
+  const pts = points.filter(p => p[1] !== null).map(p => [T(p[0]), p[1]]);
+  return html`<${Chart} height=${null} unit="A" empty="Pas de mesure sur 24 h." series=${[{ points: pts, color: col }]}
+    zones=${refc ? [{ from: refc * 0.9, to: refc * 1.1, color: "var(--green-t)" }] : []}
+    bands=${refc ? [{ y: refc, color: "var(--green-fg)", label: "Réf. " + num(refc, 1) + " A" }] : []} />`;
 }
 
 // ----------------------------------------------------------------------------- production, recette, alarmes
