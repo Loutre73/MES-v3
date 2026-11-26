@@ -18,9 +18,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r collector/requirements.txt -r api/requirements.txt pytest httpx
+      - run: pip install -r collector/requirements.txt -r api/requirements.txt -r simulator/requirements.txt pytest httpx
       - run: cd collector && python -m pytest -q tests
       - run: cd api && python -m pytest -q tests
+      - run: python -m pytest -q ops/tests simulator/tests
       - name: Syntaxe de l'interface web
         run: for f in web/*.js; do node --check "$f"; done
 
@@ -67,8 +68,26 @@ jobs:
           for i in $(seq 1 20); do r=$(curl -sf -b cj http://localhost/api/recettes/chargements/$lid | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])"); [ "$r" != en_cours ] && break; sleep 1; done
           echo "chargement : $r"; [ "$r" = acceptee ]
           curl -sf -b cj -o /dev/null http://localhost/grafana/api/health
-          curl -sf -b cj http://localhost/systeme | grep -q 'id="dash"'      # page de supervision technique
+          curl -sf -b cj http://localhost/systeme | grep -q 'ops.js'         # console d'exploitation
           curl -sf http://localhost/systeme | grep -q '<form'                # sans session : connexion
+      - name: Console d'exploitation (état, historisation, simulation, arrêt et redémarrage de l'application)
+        working-directory: deploy
+        run: |
+          pw=$(grep ^ADMIN_PASSWORD site.env | cut -d= -f2)
+          curl -sf -c cj -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$pw\"}" http://localhost/api/session > /dev/null
+          J='-sf -b cj -H Content-Type:application/json'
+          for i in $(seq 1 20); do r=$(curl $J http://localhost/api/ops/etat | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['application'], bool(d['collecteur']), bool(d['simulateur']))"); echo "$r"; [ "$r" = "en_service True True" ] && break; sleep 3; done
+          [ "$r" = "en_service True True" ]
+          curl $J -X PUT -d '{"dbs": {"DB_Process": false}}' http://localhost/api/ops/historisation | python3 -c "import sys,json; assert json.load(sys.stdin)['dbs_suspendus'] == ['DB_Process']"
+          curl $J -X PUT -d '{"dbs": {"DB_Process": true}}' http://localhost/api/ops/historisation > /dev/null
+          curl $J -X POST -d '{"cible": "L3", "duree_min": 1}' http://localhost/api/ops/simulation/scenarios/panne_ligne > /dev/null
+          curl $J "http://localhost/api/ops/simulation/tags?noms=DB_Lignes.L3.Marche" | python3 -c "import sys,json; print(json.load(sys.stdin))"
+          curl $J -X POST -d '{}' http://localhost/api/ops/application/stop > /dev/null
+          curl -s -o /dev/null -w '%{http_code}' -b cj http://localhost/systeme | grep -q 200    # console servie, API arrêtée
+          curl $J -X POST -d '{}' http://localhost/api/ops/application/start > /dev/null
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost/api/sante && break; sleep 2; done
+          curl -sf http://localhost/api/sante
+          curl $J "http://localhost/api/ops/journal?n=10"
       - name: Supervision technique (toutes les cibles Prometheus remontent)
         working-directory: deploy
         run: |
@@ -99,6 +118,7 @@ jobs:
           - { name: mes-simulator, context: simulator }
           - { name: mes-api, context: ., file: api/Dockerfile }
           - { name: mes-web, context: web }
+          - { name: mes-ops, context: ops }
     steps:
       - uses: actions/checkout@v4
       - id: version

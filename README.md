@@ -35,7 +35,8 @@ Rôles : opérateur, chef d'équipe, maintenance, administrateur. Avec l'AD, le 
 | `migrate` | Applique les migrations SQL (`db/migrations`) et les durées de conservation, à chaque démarrage |
 | `collector` | Client OPC UA : abonnements à 1 s, deadband par tag, écriture par lots, tampon disque, rechargement du catalogue à chaud |
 | `grafana` | Tableaux de bord livrés en fichiers (`grafana/dashboards`) |
-| `simulator` | Simulateur S7-1500 (profil `sim`) : 10 000 tags (moteurs, compteurs, lignes, mesures) et DB de recette |
+| `simulator` | Simulateur S7-1500 (profil `sim`) : 10 000 tags (moteurs, compteurs, lignes, mesures) et DB de recette ; règles et scénarios pilotés depuis la console d'exploitation |
+| `ops` | Agent d'exploitation : sert la console `/systeme` (état des services, démarrage et arrêt, journaux, historisation, simulation) |
 | `prometheus`, `node-exporter`, `docker-exporter`, `process-exporter`, `postgres-exporter` | Surveillance technique (profil `monitoring`), voir « Supervision technique » |
 
 ## Démarrage rapide (démonstration avec simulateur)
@@ -88,9 +89,24 @@ Les versions sont publiées par la CI : un tag Git `v0.2.0` construit et pousse 
 - Entre deux changements, la valeur est la dernière connue : `historian.value_at(tag_id, instant)`, ou `locf()` dans les requêtes Grafana. Le collecteur réécrit la dernière valeur des tags immobiles toutes les 15 min pour borner ces recherches.
 - Une perte de connexion à l'automate écrit une valeur de qualité mauvaise pour chaque tag.
 
+## Console d'exploitation
+
+Page web séparée **http://serveur/systeme** (hors de l'application MES, connexion avec un compte MES ou AD). Lecture pour toute session, actions réservées au rôle **admin**, toutes tracées dans le journal des opérations.
+
+| Onglet | Contenu |
+| --- | --- |
+| Architecture | Schéma vivant des services : état (vert, orange, rouge), débits sur les liaisons (valeurs OPC UA/s, points écrits/s, requêtes/s), hôte (CPU, mémoire, disque). Un clic sur un bloc : détail, actions, derniers journaux |
+| Services et commandes | Démarrer, arrêter, redémarrer **l'application** (collecteur, API, Grafana ; la base, le web et la console restent en marche) ou un service ; historisation (interrupteur, suspension 15 min, 1 h ou jusqu'à réactivation) ; disque et volumes ; journaux de chaque service ; journal des opérations |
+| Simulation | Règles du simulateur par DB, modifiées à chaud (arrêts par heure, durée des arrêts, dérive des moteurs, bruit, cadence...) ; historisation par DB ; valeurs des tags en direct avec courbe ; scénarios (panne de ligne, micro-arrêts, défaut ou dérive moteur, pic de consommation, coupure OPC UA) |
+| Supervision Grafana | Le tableau Grafana « Système » ci-dessous (profil `monitoring`) |
+
+- **Historisation suspendue** : le collecteur reste connecté à l'automate et suit les valeurs, mais n'écrit plus dans l'historian ; arrêts, alarmes et KPI ne sont plus alimentés pendant ce temps. À la reprise, la dernière valeur de chaque tag est réécrite. L'état survit à un redémarrage du collecteur.
+- **Agent d'exploitation** (`ops/ops_agent.py`, bibliothèque standard Python) : indépendant de l'API, la console reste disponible application arrêtée. Il accède au socket Docker (équivalent root sur l'hôte) mais n'accepte qu'une liste fermée d'actions (démarrer, arrêter, redémarrer, journaux) sur les services du projet ; ni `web` ni la console ne peuvent être arrêtés depuis la console. Le collecteur (port 9109) et le simulateur (port 8090) exposent leur contrôle sur le réseau Docker seulement.
+- Sans session, la page affiche son propre formulaire de connexion (il nécessite l'API : si l'application est arrêtée et la session expirée, relancer avec `./mesctl start`).
+
 ## Supervision technique
 
-Page web séparée **http://serveur/systeme** (hors de l'application MES, connexion avec un compte MES ou AD) : tableau Grafana **Système - supervision technique** en plein écran, pour le développement et l'exploitation. Options d'URL : `?periode=6h&actualisation=5s`.
+Tableau Grafana **Système - supervision technique**, dans l'onglet « Supervision Grafana » de la console, pour le développement et l'exploitation.
 
 | Section | Contenu |
 | --- | --- |

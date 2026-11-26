@@ -10,5 +10,5 @@ COPY mes_collector ./mes_collector
 RUN useradd -r -u 10001 mes && mkdir -p /spool && chown mes /spool
 USER mes
 VOLUME ["/spool"]
-EXPOSE 9108
+EXPOSE 9108 9109
 CMD ["python", "-m", "mes_collector.main"]
