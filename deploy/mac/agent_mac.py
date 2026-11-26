@@ -179,7 +179,7 @@ def colima_fichier() -> int:
     """Place réellement occupée sur le Mac par les disques de la VM (fichiers creux : blocs alloués)."""
     total = 0
     base = Path.home() / ".colima" / "_lima"
-    for p in list(base.glob("_disks/*/datadisk")) + list(base.glob("*/diffdisk")):
+    for p in list(base.glob("_disks/*/datadisk")) + list(base.glob("*/diffdisk")) + list(base.glob("*/disk")):
         try:
             total += p.stat().st_blocks * 512
         except OSError:
