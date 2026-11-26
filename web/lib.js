@@ -144,6 +144,21 @@ function Chart({ series, height = 220, bands = [], zones = [], unit = "", area =
   </div>`;
 }
 
+// mini-courbe sans axes (cartes de ligne) : ligne pleine, aire légère, référence en tirets
+export function Spark({ points, height = 30, color = "var(--green)", nominal = null, x0 = null, x1 = null }) {
+  const pts = points.filter(p => p[1] !== null && p[1] !== undefined);
+  if (pts.length < 2) return html`<div style=${{ height: height + "px" }}></div>`;
+  const W = 300, H = height, a = x0 ?? pts[0][0], b = Math.max(x1 ?? pts[pts.length - 1][0], a + 1);
+  const max = Math.max(1, nominal || 0, ...pts.map(p => p[1])) * 1.08;
+  const X = t => ((t - a) / (b - a)) * W, Y = v => H - 1 - (v / max) * (H - 2);
+  const line = pts.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ");
+  return html`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style=${{ width: "100%", height: H + "px", display: "block", flex: "none" }} aria-hidden="true">
+    <polygon points=${`${X(pts[0][0])},${H} ${line} ${X(pts[pts.length - 1][0])},${H}`} style=${{ fill: color, opacity: 0.15 }} />
+    ${nominal ? html`<line x1="0" x2=${W} y1=${Y(nominal)} y2=${Y(nominal)} style=${{ stroke: "var(--text2)" }} stroke-dasharray="3 3" vector-effect="non-scaling-stroke" />` : ""}
+    <polyline points=${line} fill="none" style=${{ stroke: color }} stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+  </svg>`;
+}
+
 // ----------------------------------------------------------------------------- thème clair / sombre
 const THEME_KEY = "mes-theme";
 function initialTheme() {

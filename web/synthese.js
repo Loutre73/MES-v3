@@ -1,7 +1,7 @@
 // Synthèse usine : bandeau d'indicateurs puis tuiles agrandissables ; la vue tient dans la hauteur de l'écran.
 import { html, useState } from "./vendor/preact-htm.module.js";
 import {
-  api, useApi, Msg, Band, Tile, Pill, Frise, Bars, Ring, Info, Icon, ICON, Dialog, useToast, lineState, oeeKind,
+  api, useApi, Msg, Band, Tile, Pill, Frise, Bars, Ring, Info, Spark, Icon, ICON, Dialog, useToast, lineState, oeeKind,
   hm, num, pct, dur, dhms, dt, nowLabel, fmtDayShort,
 } from "./lib.js";
 
@@ -56,6 +56,7 @@ export function Synthese({ user }) {
   const shifts = useApi(period === "poste" ? null : `/shifts?depuis=${encodeURIComponent(from.toISOString())}&jours=${days}`, [period], 60000);
   const week = useApi(`/shifts?depuis=${encodeURIComponent(new Date(Date.now() - 7 * 86400e3).toISOString())}&jours=8`, [], 300000);
   const hourly = useApi("/usine/horaire?heures=24", [], 60000);
+  const rate = useApi("/usine/debit?heures=8", [], 60000);
   const todo = useApi("/arrets?a_qualifier=true&jours=2", [], 15000);
   const stops = useApi("/arrets?jours=1", [], 15000);
   const causes = useApi("/arrets/causes");
@@ -156,7 +157,8 @@ export function Synthese({ user }) {
       <article class="tile" style="grid-column:span 12">
         <div class="th"><h2>Lignes</h2></div>
         <div style=${{ display: "grid", gridTemplateColumns: `repeat(${Math.max(1, lines.length)}, minmax(0, 1fr))`, gap: "10px", flex: 1, minHeight: 0 }}>
-          ${lines.map(l => html`<${LineCard} l=${l} stops=${(stops.data || []).filter(s => s.machine_id === l.id)} />`)}
+          ${lines.map(l => html`<${LineCard} l=${l} stops=${(stops.data || []).filter(s => s.machine_id === l.id)}
+            rate=${(rate.data || []).filter(r => r.line_id === l.id).map(r => [T(r.t), r.v])} />`)}
           ${!lines.length && html`<p class="empty">Aucune ligne. <a href="#/catalogue">Catalogue →</a></p>`}
         </div>
       </article>
@@ -200,15 +202,18 @@ export function Synthese({ user }) {
   </div>`;
 }
 
-function LineCard({ l, stops }) {
+function LineCard({ l, stops, rate }) {
   const st = lineState(l);
   const prog = l.target_t ? Math.min(1, (l.tonnage_t || 0) / l.target_t) : null;
   return html`<a href=${`#/ligne/${l.id}`} class="lcard" style="text-decoration:none;color:inherit;background:var(--fill2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-width:0;min-height:0;overflow:hidden">
     <div style="display:flex;align-items:center;gap:8px"><b style="font-size:16px">${l.name}</b><span class="spacer"></span><${Pill} kind=${st.kind}>${st.label}</${Pill}></div>
     <div style="display:flex;align-items:baseline;gap:6px"><span class="num" style=${{ fontSize: "22px", fontWeight: 800, whiteSpace: "nowrap", color: KIND_COLOR[oeeKind(l.oee)] }}>${pct(l.oee)}</span><span class="sub">TRS</span>
-      <span class="spacer"></span>${l.unqualified_count ? html`<span title="Arrêts à qualifier"><${Pill} kind="warn">${l.unqualified_count}</${Pill}></span>` : ""}</div>
+      <span class="spacer"></span><span class="sub num" style="white-space:nowrap">${num(l.tonnage_t, 0)}${prog !== null ? ` / ${num(l.target_t, 0)}` : ""} t</span>
+      ${l.unqualified_count ? html`<span title="Arrêts à qualifier"><${Pill} kind="warn">${l.unqualified_count}</${Pill}></span>` : ""}</div>
     ${l.starts_at && html`<${Frise} start=${l.starts_at} end=${l.ends_at} small stops=${stops.filter(s => T(s.ends_at || Date.now()) > T(l.starts_at) && T(s.starts_at) < T(l.ends_at))} />`}
-    <div class="sub num" style="display:flex;gap:10px;flex-wrap:wrap"><span>${num(l.debit, 0)} t/h</span><span>${num(l.tonnage_t, 0)}${prog !== null ? ` / ${num(l.target_t, 0)}` : ""} t</span><span>${num(l.kwh_per_t, 1)} kWh/t</span></div>
+    <div style="display:flex;align-items:flex-end;gap:8px;flex:none" title="Débit sur 8 h (t/h) ; tirets : cadence nominale">
+      <div style="flex:1;min-width:0"><${Spark} points=${rate} nominal=${l.cadence_nominale_th} color=${KIND_COLOR[st.kind === "idle" ? "good" : st.kind]} height=${24} x0=${Date.now() - 8 * 3600e3} x1=${Date.now()} /></div>
+      <b class="num" style="font-size:14px;white-space:nowrap">${num(l.debit, 0)} t/h</b></div>
   </a>`;
 }
 

@@ -20,6 +20,7 @@ export function Ligne({ user, route }) {
   const causes = useApi("/arrets/causes");
   const [open, setOpen] = useState(null);
   const [sel, setSel] = useState(null);
+  const [prodView, setProdView] = useState("debit");
   const [toast, showToast] = useToast();
   const d = detail.data;
 
@@ -86,11 +87,16 @@ export function Ligne({ user, route }) {
         detail=${html`<${Synoptic} motors=${d.moteurs} big />`}>
         <${Synoptic} motors=${d.moteurs} />
       </${Tile}>
-      <${Tile} id="prod" title="Production par heure" open=${open} onToggle=${setOpen} col="2 / 4" row="1 / 2"
-        extra=${html`<${Info}>Barres : tonnes produites. Tirets : objectif horaire${s?.target_t ? ` (${num(s.target_t / Math.max(1, d.production_h.length), 0)} t/h)` : ""}.</${Info}>`}
+      <${Tile} id="prod" title=${prodView === "debit" ? "Débit" : "Production par heure"} open=${open} onToggle=${setOpen} col="2 / 4" row="1 / 2"
+        extra=${html`<div class="seg light" role="group" aria-label="Vue"><button type="button" class=${prodView === "debit" ? "on" : ""} onClick=${() => setProdView("debit")}>t/h</button>
+          <button type="button" class=${prodView === "prod" ? "on" : ""} onClick=${() => setProdView("prod")}>t</button></div>
+          <${Info}>${prodView === "debit" ? html`Débit moyen par 5 min (t/h). Tirets : cadence nominale${l.cadence_nominale_th ? ` (${num(l.cadence_nominale_th, 0)} t/h)` : ""}.` : html`Barres : tonnes produites. Tirets : objectif horaire${s?.target_t ? ` (${num(s.target_t / Math.max(1, d.production_h.length), 0)} t/h)` : ""}.`}</${Info}>`}
         detail=${html`<${ProdDetail} rows=${d.production_h} />`}>
-        <div style="flex:1;min-height:0"><${Bars} data=${d.production_h.map(r => ({ label: hm(r.h).slice(0, 2) + "h", v: r.t, target: r.objectif,
-          color: r.t === null ? "var(--fill)" : r.objectif && r.t < 0.9 * r.objectif ? "var(--orange)" : "var(--green)" }))} unit="t" labelEvery=${1} /></div>
+        ${prodView === "debit" ? html`<div style="flex:1;min-height:0;display:flex"><${Chart} height=${null} unit="t/h" empty="Pas de débit sur ce poste."
+          series=${[{ points: (d.debit || []).map(r => [T(r.t), r.v]), color: "var(--green)" }]}
+          bands=${l.cadence_nominale_th ? [{ y: l.cadence_nominale_th, color: "var(--text2)", label: "Nominal " + num(l.cadence_nominale_th, 0) }] : []} /></div>`
+        : html`<div style="flex:1;min-height:0"><${Bars} data=${d.production_h.map(r => ({ label: hm(r.h).slice(0, 2) + "h", v: r.t, target: r.objectif,
+          color: r.t === null ? "var(--fill)" : r.objectif && r.t < 0.9 * r.objectif ? "var(--orange)" : "var(--green)" }))} unit="t" labelEvery=${1} /></div>`}
       </${Tile}>
       <${Tile} id="recette" title="Recette vs réel" open=${open} onToggle=${setOpen} col="2 / 3" row="2 / 3"
         detail=${html`<${RecipeCompare} shift=${s} big />`}>
