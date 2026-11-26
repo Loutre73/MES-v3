@@ -1,99 +1,12 @@
 // Interface MES v3 : Preact + htm, sans étape de compilation (fonctionne hors ligne).
-import { html, render, useState, useEffect, useRef, useCallback } from "./vendor/preact-htm.module.js";
-
-// ----------------------------------------------------------------------------- outils
-async function api(path, opts = {}) {
-  const init = { method: opts.method || "GET", headers: {}, credentials: "same-origin" };
-  if (opts.body instanceof FormData) init.body = opts.body;
-  else if (opts.body !== undefined) { init.body = JSON.stringify(opts.body); init.headers["Content-Type"] = "application/json"; }
-  const r = await fetch("/api" + path, init);
-  if (r.status === 401 && path !== "/session") { window.dispatchEvent(new Event("mes-logout")); throw new Error("Session expirée"); }
-  const ct = r.headers.get("content-type") || "";
-  const data = ct.includes("json") ? await r.json() : await r.text();
-  if (!r.ok) throw new Error((data && data.detail && (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail))) || r.statusText);
-  return data;
-}
-
-function useApi(path, deps = [], refreshMs = 0) {
-  const [state, set] = useState({ data: null, error: null, loading: true });
-  const reload = useCallback(() => {
-    if (!path) return;
-    api(path).then(d => set({ data: d, error: null, loading: false }), e => set(s => ({ ...s, error: e.message, loading: false })));
-  }, [path]);
-  useEffect(() => {
-    reload();
-    if (!refreshMs) return;
-    const t = setInterval(reload, refreshMs);
-    return () => clearInterval(t);
-  }, [path, ...deps]);
-  return { ...state, reload };
-}
-
-const fmtDT = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
-const fmtT = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
-const dt = v => (v ? fmtDT.format(new Date(v)) : "");
-const hm = v => (v ? fmtT.format(new Date(v)) : "");
-const num = (v, d = 1) => (v === null || v === undefined || v === "" ? "–" : Number(v).toLocaleString("fr-FR", { maximumFractionDigits: d, minimumFractionDigits: d }));
-const pct = v => (v === null || v === undefined ? "–" : num(v * 100, 1) + " %");
-function dur(s) {
-  if (s === null || s === undefined) return "–";
-  s = Math.round(s);
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  return h ? `${h} h ${String(m).padStart(2, "0")}` : m ? `${m} min ${String(s % 60).padStart(2, "0")}` : `${s} s`;
-}
-const toLocalInput = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
-const fromLocalInput = v => new Date(v).toISOString();
-
-const ROLE_LABEL = { operateur: "Opérateur", chef_equipe: "Chef d'équipe", maintenance: "Maintenance", admin: "Administrateur" };
-const can = (user, ...roles) => user.role === "admin" || roles.includes(user.role);
-
-function Msg({ error, ok }) {
-  if (error) return html`<div class="err">${error}</div>`;
-  if (ok) return html`<div class="ok">${ok}</div>`;
-  return null;
-}
-
-function Dialog({ title, onClose, children }) {
-  return html`<div class="dialog-back" onClick=${e => e.target === e.currentTarget && onClose()}>
-    <div class="dialog" role="dialog" aria-label=${title}><h3>${title}</h3>${children}</div></div>`;
-}
-
-// action asynchrone avec gestion d'erreur et de message
-function useAction() {
-  const [msg, setMsg] = useState({});
-  const [busy, setBusy] = useState(false);
-  const run = async (fn, okText) => {
-    setBusy(true); setMsg({});
-    try { const r = await fn(); if (okText) setMsg({ ok: typeof okText === "function" ? okText(r) : okText }); return r; }
-    catch (e) { setMsg({ error: e.message }); return undefined; }
-    finally { setBusy(false); }
-  };
-  return { msg, busy, run, setMsg };
-}
-
-// ----------------------------------------------------------------------------- courbe simple en SVG
-function Chart({ series, height = 220, yLabel = "", bands = [] }) {
-  const W = 800, H = height, P = { l: 48, r: 12, t: 10, b: 24 };
-  const pts = series.flatMap(s => s.points);
-  if (!pts.length) return html`<p class="muted">Pas de données sur la période.</p>`;
-  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]).concat(bands.map(b => b.y));
-  let x0 = Math.min(...xs), x1 = Math.max(...xs); if (x1 === x0) x1 = x0 + 1;
-  let y0 = Math.min(...ys), y1 = Math.max(...ys); if (y1 === y0) { y0 -= 1; y1 += 1; }
-  const pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
-  const X = x => P.l + ((x - x0) / (x1 - x0)) * (W - P.l - P.r);
-  const Y = y => P.t + (1 - (y - y0) / (y1 - y0)) * (H - P.t - P.b);
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => y0 + f * (y1 - y0));
-  const xt = [0, 0.5, 1].map(f => x0 + f * (x1 - x0));
-  return html`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style=${{ height: H + "px" }}>
-    ${ticks.map(t => html`<line class="axis" x1=${P.l} x2=${W - P.r} y1=${Y(t)} y2=${Y(t)} /><text x=${P.l - 6} y=${Y(t) + 4} text-anchor="end">${num(t, Math.abs(y1 - y0) < 10 ? 1 : 0)}</text>`)}
-    ${xt.map((t, i) => html`<text x=${X(t)} y=${H - 6} text-anchor=${["start", "middle", "end"][i]}>${dt(t)}</text>`)}
-    ${bands.map(b => html`<line x1=${P.l} x2=${W - P.r} y1=${Y(b.y)} y2=${Y(b.y)} stroke=${b.color} stroke-dasharray="4 4" />`)}
-    ${series.map(s => html`<polyline fill="none" stroke=${s.color || "var(--accent)"} stroke-width="2" vector-effect="non-scaling-stroke"
-        points=${s.points.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ")} />
-      ${s.points.length < 60 && s.points.map(p => html`<circle cx=${X(p[0])} cy=${Y(p[1])} r="3.5" fill=${s.color || "var(--accent)"} />`)}`)}
-    ${yLabel && html`<text x=${P.l} y=${P.t + 10}>${yLabel}</text>`}
-  </svg>`;
-}
+import { html, render, useState, useEffect } from "./vendor/preact-htm.module.js";
+import {
+  api, useApi, useAction, Msg, Dialog, Chart, dt, hm, num, pct, dur, toLocalInput, fromLocalInput, ROLE_LABEL, can,
+  Band, Icon, ThemeToggle, lineState, useTheme,
+} from "./lib.js";
+import { Synthese } from "./synthese.js";
+import { Ligne } from "./ligne.js";
+import { Planning } from "./planning.js";
 
 // ----------------------------------------------------------------------------- connexion
 function Login({ onLogin }) {
@@ -105,46 +18,12 @@ function Login({ onLogin }) {
     if (r) onLogin(r);
   };
   return html`<div class="login"><form class="panel" onSubmit=${submit}>
-    <h1>MES v3</h1>
+    <h1>MES <span>v3</span></h1>
     <${Msg} ...${a.msg} />
     <label class="f">Identifiant (compte Windows ou local)<input value=${u} onInput=${e => setU(e.target.value)} autofocus autocomplete="username" /></label>
     <label class="f">Mot de passe<input type="password" value=${p} onInput=${e => setP(e.target.value)} autocomplete="current-password" /></label>
     <button class="primary" disabled=${a.busy || !u || !p}>Se connecter</button>
   </form></div>`;
-}
-
-// ----------------------------------------------------------------------------- tableau de bord
-function Dashboard() {
-  const { data, error } = useApi("/tableau-de-bord", [], 10000);
-  if (error) return html`<${Msg} error=${error} />`;
-  if (!data) return html`<p class="muted">Chargement…</p>`;
-  const lag = data.retard_collecte_s;
-  return html`<h1>Tableau de bord</h1>
-    <div class="kpis">
-      <a class="panel kpi" href="#/alarmes" style="text-decoration:none;color:inherit"><div class="v">${data.alarmes_actives}</div><div class="l">Alarmes actives (${data.alarmes_non_acquittees} non acquittées)</div></a>
-      <a class="panel kpi" href="#/arrets" style="text-decoration:none;color:inherit"><div class="v">${data.arrets_a_qualifier}</div><div class="l">Arrêts à qualifier</div></a>
-      <a class="panel kpi" href="#/moteurs" style="text-decoration:none;color:inherit"><div class="v">${data.moteurs_en_alerte}</div><div class="l">Moteurs en alerte de dérive</div></a>
-      <div class="panel kpi"><div class="v"><span class=${"badge " + (lag === null ? "bad" : lag < 10 ? "good" : lag < 60 ? "warn" : "bad")}>${lag === null ? "aucune" : dur(lag)}</span></div><div class="l">Dernière donnée collectée</div></div>
-    </div>
-    <div class="grid">
-      ${data.lignes.map(l => {
-        const run = l.en_marche === null ? null : l.en_marche >= 0.5;
-        const prog = l.target_t ? Math.min(1, (l.tonnage_t || 0) / l.target_t) : null;
-        return html`<div class="panel line-card">
-          <div class="head"><span class="name">${l.name}</span>
-            <span class=${"badge " + (run === null ? "idle" : run ? "good" : "bad")}>${run === null ? "inconnu" : run ? "En marche" : "À l'arrêt"}</span></div>
-          <div class="muted">${l.shift_label ? `Poste ${l.shift_label} ${hm(l.starts_at)}–${hm(l.ends_at)}${l.team ? " · équipe " + l.team : ""}` : "Aucun poste en cours"}</div>
-          ${prog !== null && html`<div style="margin-top:10px"><div class="row"><span>${num(l.tonnage_t)} t / ${num(l.target_t, 0)} t</span><span class="spacer"></span><span>${pct(prog)}</span></div><div class="bar"><div style=${{ width: prog * 100 + "%" }}></div></div></div>`}
-          <dl>
-            <dt>TRS</dt><dd>${pct(l.oee)}</dd>
-            <dt>Dispo. / perf.</dt><dd>${pct(l.availability)} / ${pct(l.performance)}</dd>
-            <dt>Débit instantané</dt><dd>${num(l.debit)} t/h</dd>
-            <dt>Énergie</dt><dd>${num(l.energy_kwh, 0)} kWh · ${num(l.kwh_per_t)} kWh/t</dd>
-            <dt>Arrêts non planifiés</dt><dd>${l.stop_count ?? "–"} (${dur(l.unplanned_stop_s)})${l.unqualified_count ? html` · <a href="#/arrets">${l.unqualified_count} à qualifier</a>` : ""}</dd>
-          </dl></div>`;
-      })}
-    </div>
-    ${!data.lignes.length && html`<div class="panel">Aucune ligne déclarée. Lancez la découverte dans <a href="#/catalogue">Catalogue</a>.</div>`}`;
 }
 
 // ----------------------------------------------------------------------------- arrêts
@@ -183,7 +62,7 @@ function Stops({ user }) {
     <h2>Pareto des arrêts non planifiés</h2>
     <div class="panel">${(par.data || []).map(p => html`<div style="margin-bottom:8px">
       <div class="row"><span>${p.cause}</span><span class="spacer"></span><span class="muted">${p.nombre} arrêts · ${num(p.minutes, 0)} min</span></div>
-      <div class="bar"><div style=${{ width: (p.minutes / maxMin) * 100 + "%", background: p.category === "non_qualifie" ? "var(--warn)" : "var(--accent)" }}></div></div></div>`)}
+      <div class="bar"><div style=${{ width: (p.minutes / maxMin) * 100 + "%", background: p.category === "non_qualifie" ? "var(--orange)" : "var(--primary)" }}></div></div></div>`)}
       ${par.data && !par.data.length && html`<span class="muted">Aucun arrêt.</span>`}</div>
     ${qual && html`<${QualifyDialog} stop=${qual} causes=${causes.data || []} onClose=${() => setQual(null)}
         onDone=${() => { setQual(null); a.setMsg({ ok: "Arrêt qualifié." }); reload(); }} />`}
@@ -241,7 +120,7 @@ function Shifts({ user }) {
       <thead><tr><th>Poste</th><th>Ligne</th><th>Équipe</th><th class="num">Objectif (t)</th><th class="num">Réalisé (t)</th><th class="num">TRS</th><th class="num">kWh/t</th><th class="num">Arrêts</th><th>Commentaire</th></tr></thead>
       <tbody>${Object.entries(shiftBy).map(([k, ss]) => ss.map((s, i) => {
         const now = new Date(s.starts_at) <= new Date() && new Date(s.ends_at) > new Date();
-        return html`<tr style=${now ? "background:var(--good-bg)" : ""}>
+        return html`<tr style=${now ? "background:var(--green-t)" : ""}>
           <td>${i === 0 ? html`<b>${s.label}</b> ${dt(s.starts_at)}${now ? html` <span class="badge good">en cours</span>` : ""}` : ""}</td>
           <td>${s.line}</td>
           <td>${edit ? html`<input class="small" value=${s.team || ""} onChange=${e => patch(s, { team: e.target.value })} />` : s.team}</td>
@@ -334,9 +213,9 @@ function MotorDetail({ m, user, settings, onChange }) {
       <span class="spacer"></span><span class="muted">Référence ${num(m.ref_current, 2)} A (${m.method === "mesure" ? "mesurée" : "nominale"}${m.set_at ? ", " + dt(m.set_at) : ""})</span></div>
     <${Msg} ...${a.msg} />
     <h2>Écart au courant de référence (%) <select value=${days} onChange=${e => setDays(+e.target.value)}><option value="1">24 h</option><option value="7">7 jours</option><option value="31">31 jours</option></select></h2>
-    <${Chart} series=${[{ points: pts }]} bands=${[{ y: w, color: "var(--warn)" }, { y: -w, color: "var(--warn)" }, { y: al, color: "var(--bad)" }, { y: -al, color: "var(--bad)" }]} />
+    <${Chart} series=${[{ points: pts }]} bands=${[{ y: w, color: "var(--orange)" }, { y: -w, color: "var(--orange)" }, { y: al, color: "var(--red)" }, { y: -al, color: "var(--red)" }]} />
     <h2>Courant mesuré, 2 dernières heures (A)</h2>
-    <${Chart} height=${160} series=${[{ points: ((trend.data || {}).points || []).map(p => [new Date(p[0]).getTime(), p[1]]) }]} bands=${m.ref_current ? [{ y: m.ref_current, color: "var(--muted)" }] : []} />
+    <${Chart} height=${160} series=${[{ points: ((trend.data || {}).points || []).map(p => [new Date(p[0]).getTime(), p[1]]) }]} bands=${m.ref_current ? [{ y: m.ref_current, color: "var(--text2)" }] : []} />
     ${can(user, "maintenance") && html`<div class="row" style="margin-top:12px">
       <button onClick=${() => setRef({ method: "mesure" })} disabled=${a.busy} title="Après une intervention : le courant moyen actuel devient la référence">Recaler sur la mesure actuelle</button>
       <input class="small" type="number" step="0.1" placeholder="A" value=${nominal} onInput=${e => setNominal(e.target.value)} />
@@ -420,7 +299,7 @@ function ParamTable({ tdef, values, edit, onChange, compare }) {
       const out = v !== "" && v !== undefined && ((p.min !== undefined && p.min !== null && +v < p.min) || (p.max !== undefined && p.max !== null && +v > p.max));
       return html`<tr class=${c && c.ecart ? "diff" : ""}>
         <td>${p.label}<div class="muted" style="font-size:12px">${p.name}</div></td>
-        <td class="num">${edit ? html`<input class="small" type="number" step="any" style=${out ? "border-color:var(--bad)" : ""} value=${v ?? ""} onInput=${e => onChange({ ...values, [p.name]: e.target.value })} />` : num(v, p.datatype.startsWith("Int") ? 0 : 2)}</td>
+        <td class="num">${edit ? html`<input class="small" type="number" step="any" style=${out ? "border-color:var(--red)" : ""} value=${v ?? ""} onInput=${e => onChange({ ...values, [p.name]: e.target.value })} />` : num(v, p.datatype.startsWith("Int") ? 0 : 2)}</td>
         <td>${p.unit || ""}</td><td class="num">${p.min ?? ""}</td><td class="num">${p.max ?? ""}</td>
         ${compare && html`<td class="num">${c ? num(c.b, 2) : ""}${c && c.ecart ? html` <span class="badge warn">écart</span>` : ""}</td>`}</tr>`;
     })}</tbody></table></div>`;
@@ -627,11 +506,12 @@ function CsvIO() {
 
 // ----------------------------------------------------------------------------- analyse (Grafana)
 function Analysis() {
+  const theme = useTheme();
   const dashes = [["mes-performance", "Performance et TRS"], ["mes-energie", "Énergie"], ["mes-tendances", "Tendances historian"], ["mes-collecte", "Santé de la collecte"]];
   const [d, setD] = useState(dashes[0][0]);
   return html`<div class="row"><h1>Analyse</h1><span class="spacer"></span><a class="btn" href="/grafana/" target="_blank" rel="noopener">Ouvrir Grafana ↗</a></div>
     <div class="tabs">${dashes.map(([k, l]) => html`<button class=${d === k ? "on" : ""} onClick=${() => setD(k)}>${l}</button>`)}</div>
-    <iframe src=${`/grafana/d/${d}?kiosk&theme=light`} style="width:100%;height:calc(100vh - 170px);border:1px solid var(--line);border-radius:8px;background:#fff"></iframe>`;
+    <iframe src=${`/grafana/d/${d}?kiosk&theme=${theme === "sombre" ? "dark" : "light"}`} style="width:100%;height:calc(100vh - 230px);border:1px solid var(--line);border-radius:10px;background:var(--card)"></iframe>`;
 }
 
 // ----------------------------------------------------------------------------- paramètres, utilisateurs, journal
@@ -691,18 +571,21 @@ function Users() {
 }
 
 // ----------------------------------------------------------------------------- application
+// [route, libellé, composant, rôles autorisés, groupe du menu, vue « une hauteur d'écran »]
 const PAGES = [
-  ["", "Tableau de bord", Dashboard],
-  ["arrets", "Arrêts", Stops],
-  ["shifts", "Postes", Shifts],
-  ["alarmes", "Alarmes", Alarms],
-  ["moteurs", "Moteurs", Motors],
-  ["energie", "Énergie", Energy],
-  ["recettes", "Recettes", Recipes],
-  ["analyse", "Analyse", Analysis],
-  ["catalogue", "Catalogue", Catalog, ["admin"]],
-  ["parametres", "Paramètres", Settings],
-  ["utilisateurs", "Utilisateurs", Users, ["admin"]],
+  ["", "Synthèse", Synthese, null, "top", true],
+  ["ligne", "Ligne", Ligne, null, "hidden", true],
+  ["planning", "Planning", Planning, null, "outils", true],
+  ["arrets", "Arrêts", Stops, null, "outils"],
+  ["alarmes", "Alarmes", Alarms, null, "outils"],
+  ["moteurs", "Moteurs", Motors, null, "outils"],
+  ["energie", "Énergie", Energy, null, "outils"],
+  ["recettes", "Recettes", Recipes, null, "outils"],
+  ["analyse", "Analyse", Analysis, null, "outils"],
+  ["shifts", "Postes et arrêts planifiés", Shifts, null, "reglages"],
+  ["parametres", "Paramètres", Settings, null, "reglages"],
+  ["catalogue", "Catalogue", Catalog, ["admin"], "reglages"],
+  ["utilisateurs", "Utilisateurs", Users, ["admin"], "reglages"],
 ];
 
 function useHash() {
@@ -710,6 +593,9 @@ function useHash() {
   useEffect(() => { const f = () => setH(location.hash); addEventListener("hashchange", f); return () => removeEventListener("hashchange", f); }, []);
   return h.replace(/^#\/?/, "").split("/");
 }
+
+const LOGO = "M3 20V9l6 4V9l6 4V5h6v15z";
+const LINE_DOT = { good: "#06D16F", warn: "#FF9500", bad: "#FF3B30", idle: "#A9BDD6" };
 
 function App() {
   const [user, setUser] = useState(undefined);
@@ -727,14 +613,26 @@ function App() {
   const page = pages.find(p => p[0] === route[0]) || pages[0];
   const Comp = page[2];
   const c = counts.data || {};
-  const badge = { alarmes: c.alarmes_non_acquittees, arrets: c.arrets_a_qualifier, moteurs: c.moteurs_en_alerte };
+  const badge = { alarmes: [c.alarmes_non_acquittees, ""], arrets: [c.arrets_a_qualifier, "warn"], moteurs: [c.moteurs_en_alerte, ""] };
+  const link = p => html`<a href=${"#/" + p[0]} class=${p === page ? "on" : ""}>${p[1]}${badge[p[0]] && badge[p[0]][0] ? html`<span class=${"cnt " + badge[p[0]][1]}>${badge[p[0]][0]}</span>` : ""}</a>`;
+  const group = g => pages.filter(p => p[4] === g).map(link);
   return html`<div class="layout">
-    <nav class="side"><div class="brand">MES v3</div>
-      ${pages.map(p => html`<a href=${"#/" + p[0]} class=${p === page ? "on" : ""}>${p[1]}${badge[p[0]] ? html`<span class=${"badge " + (p[0] === "arrets" ? "warn" : "bad")}>${badge[p[0]]}</span>` : ""}</a>`)}
+    <nav class="side" aria-label="Navigation principale">
+      <div class="brand"><span class="logo"><${Icon} d=${LOGO} /></span>MES</div>
+      ${group("top")}
+      ${(c.lignes || []).length > 0 && html`<p class="grp">Lignes</p>`}
+      ${(c.lignes || []).map(l => html`<a href=${"#/ligne/" + l.id} class=${page[0] === "ligne" && +route[1] === l.id ? "on" : ""}>
+        <span class="ldot" style=${{ background: LINE_DOT[lineState(l).kind] }}></span>${l.name}${l.unqualified_count ? html`<span class="cnt warn">${l.unqualified_count}</span>` : ""}</a>`)}
+      <p class="grp">Outils</p>${group("outils")}
+      <p class="grp">Réglages</p>${group("reglages")}
       <div class="who">${user.display_name || user.username}<br />${ROLE_LABEL[user.role] !== user.display_name ? html`${ROLE_LABEL[user.role]}<br />` : ""}
         <a href="#" onClick=${e => { e.preventDefault(); api("/session", { method: "DELETE" }).finally(() => setUser(null)); }}>Se déconnecter</a>
         <div style="margin-top:8px">version ${user.version}</div></div></nav>
-    <main><${Comp} user=${user} route=${route} key=${route.join("/")} /></main></div>`;
+    ${page[5]
+      ? html`<main class="fit"><${Comp} user=${user} route=${route} key=${page[0] + "/" + (route[1] || "")} /></main>`
+      : html`<main><${Band} over=${"MES · " + (page[4] === "reglages" ? "Réglages" : "Outils")} title=${page[1]} />
+          <div class="page"><${Comp} user=${user} route=${route} key=${route.join("/")} /></div></main>`}
+  </div>`;
 }
 
 render(html`<${App} />`, document.getElementById("app"));

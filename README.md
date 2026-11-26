@@ -10,9 +10,11 @@ Application web en français (une seule adresse, comptes Active Directory ou loc
 
 | Écran | Ce qu'on y fait |
 | --- | --- |
-| Tableau de bord | État de chaque ligne, poste en cours, tonnage vs objectif, TRS, kWh/t, compteurs d'alarmes, d'arrêts à qualifier et de moteurs en dérive |
+| Synthèse usine | Indicateurs clés (TRS, production, débit, énergie, arrêts, alarmes) par poste, jour, semaine ou mois, puis tuiles agrandissables : production, TRS, arrêts à traiter (qualification en un clic), alarmes, cartes des lignes avec frise du poste, causes d'arrêt, carte des moteurs, énergie, poste et recettes |
+| Détail d'une ligne | Frise du poste (marche, ralenti, arrêts) : on sélectionne un arrêt sur la frise pour le qualifier, le découper, puis la frise passe au suivant ; synoptique des moteurs de la ligne avec courant sur 24 h, production par heure vs objectif, recette planifiée comparée à la production, alarmes |
+| Planning | La semaine sur une page : 24 h (6 h → 6 h) en abscisse, les jours en ordonnée, toutes les lignes empilées dans chaque jour ; chaque barre est un poste d'équipe. Glisser-déposer d'une recette, d'une maintenance, d'un arrêt planifié ou d'une équipe sur un poste, ou d'un poste sur un autre pour les échanger ; postes passés verrouillés |
 | Arrêts | Arrêts détectés automatiquement (signal de marche, code d'arrêt automate), qualification par cause, découpe d'un arrêt en deux, Pareto |
-| Postes | Postes générés automatiquement (3×8 par défaut), objectif de tonnage, équipe, arrêts planifiés |
+| Postes et arrêts planifiés | Liste des postes générés automatiquement (3×8 par défaut), objectif, équipe, arrêts planifiés sur une plage horaire |
 | Alarmes | Alarmes en cours et historique, acquittement, recherche |
 | Moteurs | Vue des 100 moteurs colorée par dérive de courant, courbes, recalage de la référence après intervention |
 | Énergie | Puissance appelée, consommation par compteur, kWh/t par poste et par ligne |
@@ -20,6 +22,8 @@ Application web en français (une seule adresse, comptes Active Directory ou loc
 | Analyse | Tableaux Grafana intégrés (performance, énergie, tendances historian, santé de la collecte), sans second mot de passe |
 | Catalogue | Découverte automatique des machines de l'automate, attributs, import/export CSV des machines et des tags |
 | Paramètres, Utilisateurs | Seuils, rôles, comptes locaux, journal des actions |
+
+Interface aux couleurs marine, bleu clair et vert, en thème clair ou sombre (bouton dans chaque bandeau, choix mémorisé par poste de travail). La synthèse, le détail de ligne et le planning tiennent dans la hauteur de l'écran (agrandir une tuile la superpose aux autres) ; la police Inter est livrée avec l'application, qui reste utilisable sans Internet.
 
 Rôles : opérateur, chef d'équipe, maintenance, administrateur. Avec l'AD, le rôle vient des groupes (`AUTH_LDAP_GROUP_ROLES`).
 

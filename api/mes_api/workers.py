@@ -134,6 +134,9 @@ async def compute_shift(conn, shift) -> None:
         start = first
     planned = [(r["starts_at"], r["ends_at"]) for r in await conn.fetch(
         "SELECT starts_at, ends_at FROM mes.planned_stop WHERE line_id = $1 AND ends_at > $2 AND starts_at < $3", line_id, start, end)]
+    if shift.get("kind", "production") != "production":
+        # poste planifié en maintenance ou à l'arrêt : toute sa durée est un arrêt planifié
+        planned.append((start, end))
     stop_rows = await conn.fetch(
         """SELECT starts_at, coalesce(ends_at, $4) AS ends_at, cause_id FROM mes.stop_event
            WHERE machine_id = $1 AND coalesce(ends_at, $4) > $2 AND starts_at < $3""", line_id, start, end, now)

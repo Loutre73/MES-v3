@@ -22,7 +22,7 @@ jobs:
       - run: cd collector && python -m pytest -q tests
       - run: cd api && python -m pytest -q tests
       - name: Syntaxe de l'interface web
-        run: node --check web/app.js
+        run: for f in web/*.js; do node --check "$f"; done
 
   smoke:
     # Pile complète avec le simulateur : vérifie que les données arrivent dans l'historian
@@ -53,6 +53,16 @@ jobs:
           curl -sf -c cj -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$pw\"}" http://localhost/api/session
           curl -sf -b cj http://localhost/api/catalogue/machines | python3 -c "import sys,json; n=len(json.load(sys.stdin)); print(n, 'machines'); assert n == 125"
           curl -sf -b cj http://localhost/api/tableau-de-bord > /dev/null
+          # vues de l'interface : détail de ligne, séries horaires, planning (échange de deux postes à venir)
+          lid1=$(curl -sf -b cj http://localhost/api/tableau-de-bord | python3 -c "import sys,json; print(json.load(sys.stdin)['lignes'][0]['id'])")
+          curl -sf -b cj http://localhost/api/lignes/$lid1 | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['ligne']['name']"
+          curl -sf -b cj http://localhost/api/usine/horaire > /dev/null
+          for i in $(seq 1 30); do n=$(curl -sf -b cj "http://localhost/api/shifts?jours=3" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))"); [ "$n" -gt 1 ] && break; sleep 3; done
+          ids=$(curl -sf -b cj "http://localhost/api/shifts?depuis=$(date -u -d tomorrow +%Y-%m-%dT%H:%M:%SZ)&jours=1" | python3 -c "import sys,json; s=json.load(sys.stdin); print(s[0]['id'], s[1]['id'])")
+          set -- $ids
+          curl -sf -b cj -X PATCH -H 'Content-Type: application/json' -d '{"team": "A", "kind": "arret"}' http://localhost/api/shifts/$1
+          curl -sf -b cj -X POST -H 'Content-Type: application/json' -d "{\"a\": $1, \"b\": $2}" http://localhost/api/shifts/echanger
+          curl -sf -b cj "http://localhost/api/shifts?depuis=$(date -u -d tomorrow +%Y-%m-%dT%H:%M:%SZ)&jours=1" | python3 -c "import sys,json; s={x['id']: x for x in json.load(sys.stdin)}; assert s[$2]['kind'] == 'arret' and s[$2]['team'] == 'A'"
           lid=$(curl -sf -b cj -X POST http://localhost/api/recettes/versions/1/charger | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
           for i in $(seq 1 20); do r=$(curl -sf -b cj http://localhost/api/recettes/chargements/$lid | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])"); [ "$r" != en_cours ] && break; sleep 1; done
           echo "chargement : $r"; [ "$r" = acceptee ]

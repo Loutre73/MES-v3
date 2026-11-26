@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from . import auth, db, metrics, typedefs, workers
 from .config import settings
 from .routes_catalog import router as catalog_router
+from .routes_lines import router as lines_router
 from .routes_mes import router as mes_router
 from .routes_recipes import router as recipes_router
 
@@ -45,6 +46,7 @@ metrics.install(app)
 app.include_router(catalog_router)
 app.include_router(mes_router)
 app.include_router(recipes_router)
+app.include_router(lines_router)
 
 
 class Login(BaseModel):

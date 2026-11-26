@@ -22,13 +22,14 @@ async def dashboard(_: User = Depends(current_user)):
                        WHERE g.machine_id = m.id AND g.role = 'etat_marche' ORDER BY v.time DESC LIMIT 1) AS en_marche,
                       (SELECT v.value FROM historian.value v JOIN catalog.tag g ON g.id = v.tag_id
                        WHERE g.machine_id = m.id AND g.role = 'debit' ORDER BY v.time DESC LIMIT 1) AS debit,
-                      s.id AS shift_id, s.starts_at, s.ends_at, s.team, t.label AS shift_label,
-                      k.tonnage_t, k.target_t, k.availability, k.performance, k.oee, k.energy_kwh, k.kwh_per_t,
-                      k.stop_count, k.unqualified_count, k.unplanned_stop_s
+                      (m.attributes->>'cadence_nominale_th')::float AS cadence_nominale_th,
+                      s.id AS shift_id, s.starts_at, s.ends_at, s.team, t.label AS shift_label, s.kind, r.code AS recipe_code, r.label AS recipe_label,
+                      k.tonnage_t, coalesce(k.target_t, s.target_t) AS target_t, k.availability, k.performance, k.oee, k.energy_kwh, k.kwh_per_t,
+                      k.stop_count, k.unqualified_count, k.unplanned_stop_s, k.run_s
                FROM catalog.machine m JOIN catalog.machine_type ty ON ty.id = m.type_id
                LEFT JOIN mes.shift s ON s.line_id = m.id AND s.starts_at <= now() AND s.ends_at > now()
                LEFT JOIN mes.shift_template t ON t.id = s.template_id
-               LEFT JOIN mes.shift_kpi k ON k.shift_id = s.id
+               LEFT JOIN mes.shift_kpi k ON k.shift_id = s.id LEFT JOIN mes.recipe r ON r.id = s.recipe_id
                WHERE m.enabled AND (ty.definition->>'track_stops')::boolean ORDER BY m.name"""))
         counts = dict(await conn.fetchrow(
             """SELECT (SELECT count(*) FROM mes.alarm_event WHERE cleared_at IS NULL) AS alarmes_actives,
@@ -134,33 +135,85 @@ async def pareto(jours: int = 7, line_id: int | None = None, _: User = Depends(c
 @router.get("/shifts")
 async def list_shifts(line_id: int | None = None, depuis: datetime | None = None, jours: int = 3, _: User = Depends(current_user)):
     start = depuis or (datetime.now(timezone.utc) - timedelta(days=1))
+    jours = max(1, min(jours, 62))
     async with db.pool().acquire() as conn:
         return db.rows(await conn.fetch(
-            """SELECT s.id, s.line_id, m.name AS line, s.starts_at, s.ends_at, s.team, s.target_t, s.comment, t.label,
-                      k.tonnage_t, k.availability, k.performance, k.oee, k.energy_kwh, k.kwh_per_t, k.final,
+            """SELECT s.id, s.line_id, m.name AS line, s.starts_at, s.ends_at, s.team, s.target_t, s.comment, t.label, t.code AS template,
+                      s.kind, s.recipe_id, r.code AS recipe_code, r.label AS recipe_label, k.tonnage_t, k.availability, k.performance, k.oee, k.energy_kwh, k.kwh_per_t, k.final,
                       k.stop_count, k.unqualified_count, k.planned_stop_s, k.unplanned_stop_s, k.run_s
                FROM mes.shift s JOIN catalog.machine m ON m.id = s.line_id LEFT JOIN mes.shift_template t ON t.id = s.template_id
-               LEFT JOIN mes.shift_kpi k ON k.shift_id = s.id
+               LEFT JOIN mes.shift_kpi k ON k.shift_id = s.id LEFT JOIN mes.recipe r ON r.id = s.recipe_id
                WHERE s.starts_at >= $1 AND s.starts_at < $1 + make_interval(days => $2) AND ($3::int IS NULL OR s.line_id = $3)
                ORDER BY s.starts_at, m.name""", start, jours, line_id))
 
 
+KINDS = ("production", "maintenance", "arret")
+PLAN_FIELDS = ("team", "target_t", "comment", "kind", "recipe_id")
+
+
 class ShiftPatch(BaseModel):
+    """Champs à modifier ; un champ envoyé à null est effacé, un champ absent est conservé."""
     team: str | None = None
     target_t: float | None = None
     comment: str | None = None
+    kind: str | None = None
+    recipe_id: int | None = None
+
+
+async def _recompute(conn, sid: int) -> None:
+    s = await conn.fetchrow("SELECT * FROM mes.shift WHERE id = $1", sid)
+    if s and s["starts_at"] <= datetime.now(timezone.utc):
+        await workers.compute_shift(conn, s)
 
 
 @router.patch("/shifts/{sid}")
 async def patch_shift(sid: int, body: ShiftPatch, user: User = Depends(require("chef_equipe"))):
+    changes = body.model_dump(exclude_unset=True)
+    if "kind" in changes and changes["kind"] not in KINDS:
+        raise HTTPException(400, "Type de poste : production, maintenance ou arret")
+    if changes.get("kind") is None:
+        changes.pop("kind", None)
     async with db.pool().acquire() as conn:
-        await conn.execute(
-            """UPDATE mes.shift SET team = coalesce($2, team), target_t = coalesce($3, target_t),
-                      comment = coalesce($4, comment) WHERE id = $1""", sid, body.team, body.target_t, body.comment)
-        s = await conn.fetchrow("SELECT * FROM mes.shift WHERE id = $1", sid)
-        if s and s["starts_at"] <= datetime.now(timezone.utc):
-            await workers.compute_shift(conn, s)
-        await db.audit(conn, user.username, "shift_modifie", "shift", sid, body.model_dump(exclude_none=True))
+        s = await conn.fetchrow("SELECT starts_at, ends_at FROM mes.shift WHERE id = $1", sid)
+        if s is None:
+            raise HTTPException(404, "Poste introuvable")
+        # le contenu planifié (recette, type) d'un poste terminé n'est plus modifiable ; l'équipe, l'objectif
+        # et le commentaire restent corrigeables pour le calcul des KPI
+        if s["ends_at"] <= datetime.now(timezone.utc) and ({"kind", "recipe_id"} & changes.keys()):
+            raise HTTPException(409, "Poste terminé : son contenu planifié n'est plus modifiable")
+        if changes:
+            cols = [c for c in PLAN_FIELDS if c in changes]
+            sets = ", ".join(f"{c} = ${i + 2}" for i, c in enumerate(cols))
+            await conn.execute(f"UPDATE mes.shift SET {sets} WHERE id = $1", sid, *[changes[c] for c in cols])
+            await _recompute(conn, sid)
+        await db.audit(conn, user.username, "shift_modifie", "shift", sid, changes)
+    return {"ok": True}
+
+
+class SwapBody(BaseModel):
+    a: int
+    b: int
+
+
+@router.post("/shifts/echanger")
+async def swap_shifts(body: SwapBody, user: User = Depends(require("chef_equipe"))):
+    """Échange le contenu planifié (équipe, objectif, recette, type, commentaire) de deux postes à venir."""
+    if body.a == body.b:
+        return {"ok": True}
+    async with db.pool().acquire() as conn, conn.transaction():
+        rows = {r["id"]: r for r in await conn.fetch(
+            "SELECT * FROM mes.shift WHERE id = ANY($1::int[]) FOR UPDATE", [body.a, body.b])}
+        if len(rows) != 2:
+            raise HTTPException(404, "Poste introuvable")
+        now = datetime.now(timezone.utc)
+        if any(r["starts_at"] <= now for r in rows.values()):
+            raise HTTPException(409, "Un poste commencé ou passé ne peut pas être déplacé")
+        for dst, src in ((body.a, body.b), (body.b, body.a)):
+            r = rows[src]
+            await conn.execute(
+                "UPDATE mes.shift SET team = $2, target_t = $3, comment = $4, kind = $5, recipe_id = $6 WHERE id = $1",
+                dst, r["team"], r["target_t"], r["comment"], r["kind"], r["recipe_id"])
+        await db.audit(conn, user.username, "shifts_echanges", "shift", body.a, {"avec": body.b})
     return {"ok": True}
 
 

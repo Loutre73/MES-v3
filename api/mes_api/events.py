@@ -77,7 +77,9 @@ class EventEngine:
         if exists:
             return
         planned = await conn.fetchval(
-            "SELECT EXISTS (SELECT 1 FROM mes.planned_stop WHERE line_id = $1 AND $2 >= starts_at AND $2 < ends_at)", mid, at)
+            """SELECT EXISTS (SELECT 1 FROM mes.planned_stop WHERE line_id = $1 AND $2 >= starts_at AND $2 < ends_at)
+                   OR EXISTS (SELECT 1 FROM mes.shift WHERE line_id = $1 AND kind <> 'production' AND $2 >= starts_at AND $2 < ends_at)""",
+            mid, at)
         code = self.codes.get(mid) or None
         cause = await conn.fetchval("SELECT cause_id FROM mes.plc_stop_code WHERE code = $1", code) if code else None
         await conn.execute(
