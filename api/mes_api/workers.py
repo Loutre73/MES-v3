@@ -1,4 +1,4 @@
-"""Tâches périodiques : génération des shifts, calcul des KPI et de l'énergie, dérives moteurs, purges."""
+"""Tâches périodiques : planning (mise en service, copie automatique de semaine), calcul des KPI et de l'énergie, dérives moteurs, purges."""
 from __future__ import annotations
 
 import asyncio
@@ -77,28 +77,6 @@ async def lines(conn):
            WHERE m.enabled AND (t.definition->>'track_stops')::boolean ORDER BY m.name""")
 
 
-async def generate_shifts(conn) -> int:
-    days = int(await db.get_setting(conn, "shifts_jours_a_l_avance", 7))
-    templates = await conn.fetch("SELECT * FROM mes.shift_template WHERE active")
-    today = datetime.now(TZ).date()
-    n = 0
-    for line in await lines(conn):
-        rate = (line["attributes"] or {}).get("cadence_nominale_th")
-        for d in range(-1, days + 1):
-            day = today + timedelta(days=d)
-            for t in templates:
-                start = datetime.combine(day, t["start_time"], TZ)
-                end = start + t["duration"]
-                target = round(float(rate) * t["duration"].total_seconds() / 3600, 1) if rate else None
-                r = await conn.execute(
-                    """INSERT INTO mes.shift (line_id, template_id, starts_at, ends_at, target_t)
-                       VALUES ($1, $2, $3, $4, $5) ON CONFLICT (line_id, starts_at)
-                       DO UPDATE SET target_t = EXCLUDED.target_t WHERE mes.shift.target_t IS NULL AND EXCLUDED.target_t IS NOT NULL""",
-                    line["id"], t["id"], start, end, target)
-                n += r.endswith("1")
-    return n
-
-
 async def counter_delta(conn, tag_id: int, start: datetime, end: datetime) -> float | None:
     """Somme des incréments d'un compteur sur [start, end].
 
@@ -134,9 +112,6 @@ async def compute_shift(conn, shift) -> None:
         start = first
     planned = [(r["starts_at"], r["ends_at"]) for r in await conn.fetch(
         "SELECT starts_at, ends_at FROM mes.planned_stop WHERE line_id = $1 AND ends_at > $2 AND starts_at < $3", line_id, start, end)]
-    if shift.get("kind", "production") != "production":
-        # poste planifié en maintenance ou à l'arrêt : toute sa durée est un arrêt planifié
-        planned.append((start, end))
     stop_rows = await conn.fetch(
         """SELECT starts_at, coalesce(ends_at, $4) AS ends_at, cause_id FROM mes.stop_event
            WHERE machine_id = $1 AND coalesce(ends_at, $4) > $2 AND starts_at < $3""", line_id, start, end, now)
@@ -250,7 +225,9 @@ async def loop_every(seconds: float, fn, name: str) -> None:
 
 
 async def shifts_and_kpis(conn) -> None:
-    await generate_shifts(conn)
+    from . import planning
+    await planning.init_from_templates(conn)
+    await planning.auto_copy(conn)
     await compute_kpis(conn)
 
 

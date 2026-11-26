@@ -7,6 +7,7 @@ import {
 import { Synthese } from "./synthese.js";
 import { Ligne } from "./ligne.js";
 import { Planning } from "./planning.js";
+import "./touch.js";
 
 // ----------------------------------------------------------------------------- connexion
 function Login({ onLogin }) {
@@ -520,7 +521,6 @@ const SETTING_LABEL = {
   derive_seuil_attention_pct: "Dérive moteur : seuil d'attention (%)",
   derive_seuil_alerte_pct: "Dérive moteur : seuil d'alerte (%)",
   derive_fenetre_min: "Dérive moteur : fenêtre de moyenne (min)",
-  shifts_jours_a_l_avance: "Postes générés à l'avance (jours)",
   kpi_conservation: "Conservation des KPI de production",
   recette_tolerance_pct: "Comparaison de recettes : tolérance (% de la plage)",
 };
