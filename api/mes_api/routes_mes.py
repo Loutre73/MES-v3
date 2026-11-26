@@ -121,14 +121,17 @@ async def split_stop(sid: int, body: Split, user: User = Depends(require("chef_e
 
 
 @router.get("/arrets/pareto")
-async def pareto(jours: int = 7, line_id: int | None = None, _: User = Depends(current_user)):
+async def pareto(jours: int = 7, line_id: int | None = None, depuis: datetime | None = None, jusqua: datetime | None = None,
+                 _: User = Depends(current_user)):
+    """Durée cumulée des arrêts non planifiés par cause : sur les `jours` derniers jours, ou de `depuis` à `jusqua`."""
     async with db.pool().acquire() as conn:
         return db.rows(await conn.fetch(
             """SELECT coalesce(c.label, 'Non qualifié') AS cause, coalesce(c.category, 'non_qualifie') AS category,
                       count(*) AS nombre, sum(extract(epoch FROM coalesce(e.ends_at, now()) - e.starts_at)) / 60 AS minutes
                FROM mes.stop_event e LEFT JOIN mes.stop_cause c ON c.id = e.cause_id
-               WHERE NOT e.planned AND e.starts_at > now() - make_interval(days => $1) AND ($2::int IS NULL OR e.machine_id = $2)
-               GROUP BY 1, 2 ORDER BY minutes DESC""", jours, line_id))
+               WHERE NOT e.planned AND e.starts_at > coalesce($3::timestamptz, now() - make_interval(days => $1))
+                 AND ($4::timestamptz IS NULL OR e.starts_at < $4) AND ($2::int IS NULL OR e.machine_id = $2)
+               GROUP BY 1, 2 ORDER BY minutes DESC""", jours, line_id, depuis, jusqua))
 
 
 # ----------------------------------------------------------------------------- shifts
@@ -335,17 +338,20 @@ async def set_reference(mid: int, body: RefBody, user: User = Depends(require("m
 
 # ----------------------------------------------------------------------------- énergie et performance
 @router.get("/energie")
-async def energy(jours: int = 7, _: User = Depends(current_user)):
+async def energy(jours: int = 7, depuis: datetime | None = None, jusqua: datetime | None = None, _: User = Depends(current_user)):
+    """Énergie des postes commencés sur les `jours` derniers jours, ou de `depuis` à `jusqua`."""
     async with db.pool().acquire() as conn:
         par_shift = db.rows(await conn.fetch(
             """SELECT s.starts_at, m.name AS line, t.label, k.energy_kwh, k.tonnage_t, k.kwh_per_t
                FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id
                LEFT JOIN mes.shift_template t ON t.id = s.template_id
-               WHERE s.starts_at > now() - make_interval(days => $1) ORDER BY s.starts_at, m.name""", jours))
+               WHERE s.starts_at > coalesce($2::timestamptz, now() - make_interval(days => $1)) AND ($3::timestamptz IS NULL OR s.starts_at < $3)
+               ORDER BY s.starts_at, m.name""", jours, depuis, jusqua))
         par_compteur = db.rows(await conn.fetch(
             """SELECT c.name AS compteur, c.attributes->>'ligne' AS line, c.attributes->>'usage' AS usage, sum(e.kwh) AS kwh
                FROM mes.energy_shift e JOIN mes.shift s ON s.id = e.shift_id JOIN catalog.machine c ON c.id = e.meter_id
-               WHERE s.starts_at > now() - make_interval(days => $1) GROUP BY 1, 2, 3 ORDER BY kwh DESC""", jours))
+               WHERE s.starts_at > coalesce($2::timestamptz, now() - make_interval(days => $1)) AND ($3::timestamptz IS NULL OR s.starts_at < $3)
+               GROUP BY 1, 2, 3 ORDER BY kwh DESC""", jours, depuis, jusqua))
         puissance = await conn.fetchval(
             """SELECT sum(last) FROM (SELECT DISTINCT ON (g.id) v.value AS last FROM catalog.tag g JOIN historian.value v ON v.tag_id = g.id
                WHERE g.role = 'puissance' AND g.enabled AND v.time > now() - interval '15 minutes' ORDER BY g.id, v.time DESC) x""")

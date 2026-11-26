@@ -1,5 +1,5 @@
 // Outils partagés de l'interface : accès API, formats, composants communs, thème clair/sombre.
-import { html, useState, useEffect, useCallback } from "./vendor/preact-htm.module.js";
+import { html, useState, useEffect, useCallback, useRef, useLayoutEffect } from "./vendor/preact-htm.module.js";
 
 // ----------------------------------------------------------------------------- outils
 async function api(path, opts = {}) {
@@ -31,6 +31,7 @@ function useApi(path, deps = [], refreshMs = 0) {
 
 const fmtDT = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 const fmtT = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const fmtD = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit" });
 const dt = v => (v ? fmtDT.format(new Date(v)) : "");
 const hm = v => (v ? fmtT.format(new Date(v)) : "");
 const num = (v, d = 1) => (v === null || v === undefined || v === "" ? "–" : Number(v).toLocaleString("fr-FR", { maximumFractionDigits: d, minimumFractionDigits: d }));
@@ -40,6 +41,13 @@ function dur(s) {
   s = Math.round(s);
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
   return h ? `${h} h ${String(m).padStart(2, "0")}` : m ? `${m} min ${String(s % 60).padStart(2, "0")}` : `${s} s`;
+}
+// durée au format jj:hh:mm:ss
+function dhms(s) {
+  if (s === null || s === undefined) return "–";
+  s = Math.max(0, Math.round(s));
+  const p = v => String(v).padStart(2, "0");
+  return `${p(Math.floor(s / 86400))}:${p(Math.floor((s % 86400) / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
 }
 const toLocalInput = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
 const fromLocalInput = v => new Date(v).toISOString();
@@ -71,28 +79,69 @@ function useAction() {
   return { msg, busy, run, setMsg };
 }
 
-// ----------------------------------------------------------------------------- courbe simple en SVG
-function Chart({ series, height = 220, yLabel = "", bands = [] }) {
-  const W = 800, H = height, P = { l: 48, r: 12, t: 10, b: 24 };
-  const pts = series.flatMap(s => s.points);
-  if (!pts.length) return html`<p class="muted">Pas de données sur la période.</p>`;
-  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]).concat(bands.map(b => b.y));
+// ----------------------------------------------------------------------------- courbes
+// Courbe temporelle mesurée à la taille réelle (textes non déformés) : zones colorées, lignes de référence,
+// aire sous la première série, dernier point marqué, lecture au doigt ou à la souris.
+// series : [{ points: [[t_ms, v]], color, label }] ; zones : [{ from, to, color }] ; bands : [{ y, color, label }]
+const niceStep = r => { const p = 10 ** Math.floor(Math.log10(r)), f = r / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; };
+const H_STEPS = [1, 2, 3, 6, 12, 24, 48, 96, 168].map(h => h * 3600e3);
+function Chart({ series, height = 220, bands = [], zones = [], unit = "", area = true, decimals = null, empty = "Pas de données sur la période." }) {
+  const ref = useRef(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const [hover, setHover] = useState(null);
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el); return () => ro.disconnect();
+  }, []);
+  const fixedH = typeof height === "number";
+  const all = series.flatMap(s => s.points.filter(p => p[1] !== null && p[1] !== undefined));
+  if (!all.length) return html`<div ref=${ref} class="chart-box" style=${fixedH ? { height: height + "px" } : { flex: 1, minHeight: "80px" }}><p class="empty">${empty}</p></div>`;
+  const W = size.w || 600, H = size.h || (fixedH ? height : 160);
+  const P = { l: 44, r: 16, t: 12, b: 22 };
+  const xs = all.map(p => p[0]), ys = all.map(p => p[1]).concat(bands.map(b => b.y)).concat(zones.flatMap(z => [z.from, z.to]).filter(v => isFinite(v)));
   let x0 = Math.min(...xs), x1 = Math.max(...xs); if (x1 === x0) x1 = x0 + 1;
   let y0 = Math.min(...ys), y1 = Math.max(...ys); if (y1 === y0) { y0 -= 1; y1 += 1; }
-  const pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
+  const step = niceStep((y1 - y0) / 4);
+  const pos = y0 >= 0;
+  y0 = Math.floor(y0 / step - 0.15) * step; y1 = Math.ceil(y1 / step + 0.15) * step;
+  if (pos) y0 = Math.max(0, y0);
   const X = x => P.l + ((x - x0) / (x1 - x0)) * (W - P.l - P.r);
   const Y = y => P.t + (1 - (y - y0) / (y1 - y0)) * (H - P.t - P.b);
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => y0 + f * (y1 - y0));
-  const xt = [0, 0.5, 1].map(f => x0 + f * (x1 - x0));
-  return html`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style=${{ height: H + "px" }}>
-    ${ticks.map(t => html`<line class="axis" x1=${P.l} x2=${W - P.r} y1=${Y(t)} y2=${Y(t)} /><text x=${P.l - 6} y=${Y(t) + 4} text-anchor="end">${num(t, Math.abs(y1 - y0) < 10 ? 1 : 0)}</text>`)}
-    ${xt.map((t, i) => html`<text x=${X(t)} y=${H - 6} text-anchor=${["start", "middle", "end"][i]}>${dt(t)}</text>`)}
-    ${bands.map(b => html`<line x1=${P.l} x2=${W - P.r} y1=${Y(b.y)} y2=${Y(b.y)} stroke=${b.color} stroke-dasharray="4 4" />`)}
-    ${series.map(s => html`<polyline fill="none" stroke=${s.color || "var(--primary)"} stroke-width="2" vector-effect="non-scaling-stroke"
-        points=${s.points.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ")} />
-      ${s.points.length < 60 && s.points.map(p => html`<circle cx=${X(p[0])} cy=${Y(p[1])} r="3.5" fill=${s.color || "var(--primary)"} />`)}`)}
-    ${yLabel && html`<text x=${P.l} y=${P.t + 10}>${yLabel}</text>`}
-  </svg>`;
+  const d = decimals ?? (step < 1 ? 1 : 0);
+  const yt = []; for (let v = y0; v <= y1 + step / 2; v += step) yt.push(v);
+  const span = x1 - x0, xstep = H_STEPS.find(s => span / s <= Math.max(2, Math.floor((W - P.l - P.r) / 90))) || H_STEPS[H_STEPS.length - 1];
+  const xt = []; for (let t = Math.ceil(x0 / xstep) * xstep; t <= x1; t += xstep) xt.push(t);
+  const xl = t => (xstep >= 86400e3 ? fmtD.format(new Date(t)) : new Date(t).getHours() === 0 && span > 86400e3 ? fmtD.format(new Date(t)) : hm(t));
+  const clipY = v => Math.min(y1, Math.max(y0, v));
+  const pick = e => {
+    const r = ref.current.getBoundingClientRect(), t = x0 + ((e.clientX - r.left - P.l) / (W - P.l - P.r)) * (x1 - x0);
+    const s0 = series[0].points; if (!s0.length) return;
+    let best = s0[0]; for (const p of s0) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
+    setHover(best);
+  };
+  const s0 = series[0], c0 = s0.color || "var(--primary)";
+  const line = s => s.points.filter(p => p[1] !== null && p[1] !== undefined).map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ");
+  const p0 = s0.points.filter(p => p[1] !== null && p[1] !== undefined);
+  const last = p0[p0.length - 1];
+  const gid = "g" + Math.round(x0 % 1e6) + series.length;
+  return html`<div ref=${ref} class="chart-box" style=${fixedH ? { height: height + "px" } : { flex: 1, minHeight: "80px" }}
+      onPointerMove=${pick} onPointerDown=${pick} onPointerLeave=${() => setHover(null)}>
+    <svg class="chart2" width=${W} height=${H} role="img">
+      <defs><linearGradient id=${gid} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color=${c0} stop-opacity=".28" /><stop offset="1" stop-color=${c0} stop-opacity="0" /></linearGradient></defs>
+      ${zones.map(z => html`<rect x=${P.l} width=${W - P.l - P.r} y=${Y(clipY(Math.max(z.from, z.to)))} height=${Math.max(0, Y(clipY(Math.min(z.from, z.to))) - Y(clipY(Math.max(z.from, z.to))))} style=${{ fill: z.color }} />`)}
+      ${yt.map(v => html`<line class="grid" x1=${P.l} x2=${W - P.r} y1=${Y(v)} y2=${Y(v)} /><text class="yl" x=${P.l - 8} y=${Y(v) + 4} text-anchor="end">${num(v, d)}</text>`)}
+      ${xt.map(t => html`<text class="xl" x=${X(t)} y=${H - 5} text-anchor="middle">${xl(t)}</text>`)}
+      ${bands.map(b => html`<line x1=${P.l} x2=${W - P.r} y1=${Y(b.y)} y2=${Y(b.y)} style=${{ stroke: b.color }} stroke-width="1.5" stroke-dasharray="5 4" />
+        ${b.label && html`<text class="bl" x=${W - P.r - 4} y=${Y(b.y) - 5} text-anchor="end" style=${{ fill: b.color }}>${b.label}</text>`}`)}
+      ${area && p0.length > 1 && html`<polygon fill=${`url(#${gid})`} points=${`${X(p0[0][0])},${Y(y0)} ${line(s0)} ${X(last[0])},${Y(y0)}`} />`}
+      ${series.map(s => html`<polyline fill="none" style=${{ stroke: s.color || "var(--primary)" }} stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" points=${line(s)} />`)}
+      ${last && html`<circle cx=${X(last[0])} cy=${Y(last[1])} r="4.5" style=${{ fill: c0, stroke: "var(--card)" }} stroke-width="2" />`}
+      ${hover && html`<line x1=${X(hover[0])} x2=${X(hover[0])} y1=${P.t} y2=${H - P.b} style=${{ stroke: "var(--text2)" }} stroke-dasharray="3 3" />
+        <circle cx=${X(hover[0])} cy=${Y(hover[1])} r="5" style=${{ fill: c0, stroke: "var(--card)" }} stroke-width="2" />`}
+    </svg>
+    ${hover && html`<div class="chart-tip" style=${{ left: Math.min(W - 120, Math.max(0, X(hover[0]) - 60)) + "px" }}><b class="num">${num(hover[1], d + 1)} ${unit}</b><span>${span > 86400e3 ? dt(hover[0]) : hm(hover[0])}</span></div>`}
+  </div>`;
 }
 
 // ----------------------------------------------------------------------------- thème clair / sombre
@@ -135,7 +184,10 @@ export const ICON = {
   close: "M18 6 6 18M6 6l12 12",
   back: "M15 18l-6-6 6-6",
   next: "M9 18l6-6-6-6",
-  cut: "M6 3v18M18 3v18M6 12h12",
+  cut: "M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12",
+  calendar: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z",
+  link: "M7 17 17 7M9 7h8v8",
+  target: "M12 2v4M12 18v4M2 12h4M18 12h4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
 };
 
 // Bandeau marine en tête de vue : sur-titre, titre (un mot en vert), contenu à droite
@@ -158,6 +210,18 @@ export function Tile({ title, id, open, onToggle, col, row, children, detail, ex
         <${Icon} d=${isOpen ? ICON.close : ICON.expand} /></button>`}</div>
     ${isOpen && detail ? detail : children}
   </article>`;
+}
+
+// pastille « i » : le détail (légende, explication) ne s'affiche qu'au toucher
+export function Info({ children, label = "Informations" }) {
+  const [open, set] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = e => { if (!e.target.closest || !e.target.closest(".info")) set(false); };
+    addEventListener("pointerdown", close); return () => removeEventListener("pointerdown", close);
+  }, [open]);
+  return html`<span class="info"><button type="button" class=${"ib" + (open ? " on" : "")} aria-label=${label} aria-expanded=${open} onClick=${() => set(!open)}>i</button>
+    ${open && html`<div class="info-pop" role="note">${children}</div>`}</span>`;
 }
 
 export function Pill({ kind = "idle", children }) {
@@ -257,4 +321,4 @@ export function useToast() {
   return [node, show];
 }
 
-export { api, useApi, useAction, Msg, Dialog, Chart, dt, hm, num, pct, dur, toLocalInput, fromLocalInput, ROLE_LABEL, can };
+export { api, useApi, useAction, Msg, Dialog, Chart, dt, hm, num, pct, dur, dhms, toLocalInput, fromLocalInput, ROLE_LABEL, can };

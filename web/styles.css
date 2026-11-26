@@ -306,3 +306,28 @@ html.touch input, html.touch textarea { caret-color: transparent; }
   main, main.fit { height: auto; overflow: visible; }
   .kstrip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* ------------------------------------------------------------------ courbes, info, période */
+.xb { padding: 0; }
+.xb svg { display: block; }
+.chart-box { position: relative; width: 100%; min-width: 0; touch-action: pan-y; }
+.chart-box .empty { margin: 0; }
+svg.chart2 { display: block; overflow: visible; }
+svg.chart2 .grid { stroke: var(--line); stroke-width: 1; }
+svg.chart2 text { font-size: 11px; fill: var(--text2); font-variant-numeric: tabular-nums; }
+svg.chart2 .bl { font-size: 11px; font-weight: 700; }
+svg.chart2 .unit { font-weight: 700; }
+.chart-tip { position: absolute; top: 2px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 4px 8px; border-radius: 8px; background: var(--primary); color: var(--card); font-size: 12px; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+.chart-tip b { font-size: 14px; }
+.info { position: relative; display: inline-flex; flex: none; }
+.info .ib { width: 22px; height: 22px; padding: 0; border-radius: 50%; justify-content: center; font-size: 12px; font-weight: 800; font-style: italic; font-family: Georgia, serif; border: 1px solid var(--line); background: var(--fill); color: var(--text2); }
+.info .ib.on { background: var(--primary); color: var(--card); border-color: var(--primary); }
+.info-pop { position: absolute; top: 28px; right: 0; z-index: 12; width: max-content; max-width: 320px; padding: 10px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 12px 30px rgba(0,0,0,.18); font-size: 13px; color: var(--text); font-weight: 400; display: flex; flex-direction: column; gap: 6px; text-transform: none; letter-spacing: 0; }
+.info-pop .legend { flex-direction: column; align-items: flex-start; gap: 6px; }
+.band .info .ib { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.2); color: #fff; }
+.iconbtn { width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 50%; flex: none; }
+.period-lbl { font-size: 13px; font-weight: 700; color: #fff; padding: 0 4px; white-space: nowrap; }
+.mstat { display: flex; gap: 16px; flex-wrap: wrap; }
+.mstat > div { display: flex; flex-direction: column; }
+.mstat span { font-size: 12px; color: var(--text2); font-weight: 600; }
+.mstat b { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
