@@ -117,7 +117,8 @@ async def replace_stops(conn, shift_id: int, line_id: int, stops: list[Stop], ac
 async def insert_shift(conn, s: ShiftData, actor: str | None) -> int:
     sid = await conn.fetchval(
         """INSERT INTO mes.shift (line_id, template_id, starts_at, ends_at, team, target_t, comment, kind, recipe_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'production', $8) RETURNING id""",
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'production', (SELECT id FROM mes.recipe WHERE id = $8 AND deleted_at IS NULL))
+           RETURNING id""",  # une recette supprimée n'est jamais recopiée
         s.line_id, s.template_id, s.starts_at, s.ends_at, s.team, s.target_t, s.comment, s.recipe_id)
     await replace_stops(conn, sid, s.line_id, s.stops, actor)
     return sid

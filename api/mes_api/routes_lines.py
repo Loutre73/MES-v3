@@ -78,7 +78,7 @@ async def line_detail(lid: int, shift_id: int | None = None, _: User = Depends(c
             "ligne": {"id": line["id"], "name": line["name"], "cadence_nominale_th": nominal,
                       "en_marche": await _last(conn, run_tag), "debit": await _last(conn, rate_tag)},
             "shift": dict(shift) if shift else None, "navigation": nav,
-            "arrets": [], "ralentis": [], "production_h": [], "moteurs": [], "alarmes": [],
+            "arrets": [], "ralentis": [], "debit": [], "production_h": [], "moteurs": [], "alarmes": [],
         }
         if shift is not None:
             start, end = shift["starts_at"], shift["ends_at"]
@@ -93,6 +93,7 @@ async def line_detail(lid: int, shift_id: int | None = None, _: User = Depends(c
                 five = await conn.fetch(
                     """SELECT time_bucket('5 minutes', bucket) AS t, avg(avg) AS v FROM historian.value_1min
                        WHERE tag_id = $1 AND bucket >= $2 AND bucket < $3 GROUP BY 1 ORDER BY 1""", rate_tag, start, min(end, now))
+                result["debit"] = [{"t": r["t"], "v": r["v"]} for r in five]
                 spans = [(s["starts_at"], s["ends_at"] or now) for s in stops]
                 result["ralentis"] = [{"starts_at": a, "ends_at": b} for a, b in
                                       slow_intervals([(r["t"], r["v"]) for r in five], timedelta(minutes=5), nominal, spans)]
@@ -122,6 +123,19 @@ async def line_detail(lid: int, shift_id: int | None = None, _: User = Depends(c
                WHERE (e.cleared_at IS NULL OR e.ack_at IS NULL)
                  AND (m.id = $1 OR m.attributes->>'ligne' = $2) ORDER BY e.raised_at DESC LIMIT 20""", lid, line["name"]))
     return result
+
+
+@router.get("/usine/debit")
+async def plant_rate(heures: int = 8, _: User = Depends(current_user)):
+    """Débit (t/h) de chaque ligne, moyenne par 5 minutes, sur les dernières heures."""
+    heures = max(1, min(heures, 48))
+    async with db.pool().acquire() as conn:
+        return db.rows(await conn.fetch(
+            """SELECT time_bucket('5 minutes', v.bucket) AS t, m.id AS line_id, avg(v.avg) AS v
+               FROM historian.value_1min v JOIN catalog.tag g ON g.id = v.tag_id AND g.role = 'debit'
+               JOIN catalog.machine m ON m.id = g.machine_id JOIN catalog.machine_type ty ON ty.id = m.type_id
+               WHERE (ty.definition->>'track_stops')::boolean AND m.enabled AND v.bucket > now() - make_interval(hours => $1)
+               GROUP BY 1, 2 ORDER BY 2, 1""", heures))
 
 
 @router.get("/usine/horaire")

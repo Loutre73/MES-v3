@@ -355,8 +355,8 @@
   },
   {
    "id": 8,
-   "type": "barchart",
-   "title": "Pareto des causes d'arrêt (minutes)",
+   "type": "table",
+   "title": "Pareto des causes d'arrêt (jj:hh:mm:ss)",
    "datasource": {
     "type": "grafana-postgresql-datasource",
     "uid": "historian"
@@ -368,13 +368,94 @@
     "y": 23
    },
    "fieldConfig": {
-    "defaults": {},
-    "overrides": []
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "part"
+      },
+      "properties": [
+       {
+        "id": "displayName",
+        "value": " "
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "gauge",
+         "mode": "basic",
+         "valueDisplayMode": "hidden"
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#82A1CD"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "durée"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 130
+       },
+       {
+        "id": "custom.align",
+        "value": "right"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "arrêts"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 80
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "cause"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 220
+       }
+      ]
+     }
+    ]
    },
    "options": {
-    "orientation": "horizontal",
-    "xField": "cause",
-    "showValue": "auto"
+    "showHeader": true,
+    "cellHeight": "sm",
+    "footer": {
+     "show": false
+    }
    },
    "targets": [
     {
@@ -386,7 +467,7 @@
      "format": "table",
      "rawQuery": true,
      "editorMode": "code",
-     "rawSql": "SELECT coalesce(c.label, 'Non qualifié') AS cause, round(sum(extract(epoch FROM coalesce(e.ends_at, now()) - e.starts_at)) / 60) AS minutes FROM mes.stop_event e JOIN catalog.machine m ON m.id = e.machine_id LEFT JOIN mes.stop_cause c ON c.id = e.cause_id WHERE NOT e.planned AND $__timeFilter(e.starts_at) AND m.name IN (${ligne:sqlstring}) GROUP BY 1 ORDER BY 2 DESC LIMIT 15"
+     "rawSql": "SELECT cause, lpad((s / 86400)::text, 2, '0') || ':' || to_char(make_interval(secs => s % 86400), 'HH24:MI:SS') AS \"durée\", n AS \"arrêts\", s AS part FROM (SELECT coalesce(c.label, 'Non qualifié') AS cause, round(sum(extract(epoch FROM coalesce(e.ends_at, now()) - e.starts_at)))::bigint AS s, count(*) AS n FROM mes.stop_event e JOIN catalog.machine m ON m.id = e.machine_id LEFT JOIN mes.stop_cause c ON c.id = e.cause_id WHERE NOT e.planned AND $__timeFilter(e.starts_at) AND m.name IN (${ligne:sqlstring}) GROUP BY 1) x ORDER BY s DESC LIMIT 15"
     }
    ]
   }
