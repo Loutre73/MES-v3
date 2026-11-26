@@ -45,7 +45,7 @@ get_images() {
   # Images de la version : en ligne depuis le registre, ou construites localement pour MES_VERSION=dev
   if [ "$(env_get MES_VERSION)" = "dev" ]; then
     local reg; reg=$(env_get MES_REGISTRY); reg=${reg:-ghcr.io/loutre73}
-    for i in collector api web migrate; do
+    for i in collector api web migrate ops; do
       docker image inspect "$reg/mes-$i:dev" >/dev/null 2>&1 || { compose --profile sim build; break; }
     done
   else
@@ -56,7 +56,7 @@ get_images() {
 wait_healthy() {
   say "Contrôle de santé..."
   for _ in $(seq 1 60); do
-    if compose ps --format '{{.Service}} {{.State}} {{.Health}}' | grep -E '^(db|collector|grafana|api|web) ' | grep -Evq 'running( healthy)? *$'; then
+    if compose ps --format '{{.Service}} {{.State}} {{.Health}}' | grep -E '^(db|collector|grafana|api|web|ops) ' | grep -Evq 'running( healthy)? *$'; then
       sleep 2
     else
       compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'

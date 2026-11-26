@@ -107,6 +107,26 @@ services:
     depends_on:
       - api
       - grafana
+      - ops
+
+  # Agent d'exploitation : sert la console /systeme (architecture, services, historisation, simulation).
+  # Indépendant de l'API : la console reste disponible quand l'application est arrêtée.
+  ops:
+    image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-ops:${MES_VERSION:-dev}
+    build: ../ops
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      MES_VERSION: ${MES_VERSION:-dev}
+      COMPOSE_PROJECT: mes
+      HISTORIAN_RETENTION: ${HISTORIAN_RETENTION:-1 year}
+      AGGREGATE_1MIN_RETENTION: ${AGGREGATE_1MIN_RETENTION:-1 year}
+      AGGREGATE_1H_RETENTION: ${AGGREGATE_1H_RETENTION:-3 years}
+    volumes:
+      # Pilotage Docker (démarrer, arrêter, redémarrer, journaux) : équivalent root sur l'hôte.
+      # L'agent n'accepte qu'une liste fermée d'actions, réservées au rôle admin.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ops-data:/data
 
   grafana:
     image: grafana/grafana-oss:11.3.0
@@ -147,6 +167,8 @@ services:
     environment:
       SIM_TOTAL_TAGS: ${SIM_TOTAL_TAGS:-10000}
       SIM_CHANGE_RATIO: ${SIM_CHANGE_RATIO:-0.3}
+    volumes:
+      - sim-data:/data    # règles de simulation modifiées depuis la console
 
   # ---- Surveillance technique (profil "monitoring") : tableau de bord Grafana « Système » ----
   # Prometheus collecte toutes les 10 s ; volume plafonné par PROMETHEUS_RETENTION_SIZE.
@@ -218,3 +240,5 @@ volumes:
   collector-spool:
   grafana-data:
   prometheus-data:
+  ops-data:
+  sim-data:

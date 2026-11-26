@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Supervision technique · MES v3</title>
+<title>Console d'exploitation · MES v3</title>
 <style>
   :root { --bg: #111217; --card: #181b1f; --line: #2c3235; --text: #ccccdc; --muted: #8e8e9e; --accent: #3d71d9; --err: #f2495c; }
   * { box-sizing: border-box; }
@@ -22,7 +22,7 @@
 </head>
 <body>
 <form id="f">
-  <h1>Supervision technique</h1>
+  <h1>Console d'exploitation</h1>
   <p>MES v3 · connectez-vous avec votre compte MES ou Active Directory.</p>
   <label for="u">Identifiant</label>
   <input id="u" autocomplete="username" required autofocus>
@@ -39,7 +39,7 @@
     const r = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: document.getElementById("u").value, password: document.getElementById("p").value }) });
     if (r.ok) location.reload();
-    else err.textContent = r.status === 401 ? "Identifiant ou mot de passe incorrect." : "Connexion impossible (" + r.status + ").";
+    else err.textContent = r.status === 401 ? "Identifiant ou mot de passe incorrect." : r.status >= 502 ? "Connexion impossible : l'API MES est arrêtée. Démarrez-la avec ./mesctl start." : "Connexion impossible (" + r.status + ").";
   };
 </script>
 </body>

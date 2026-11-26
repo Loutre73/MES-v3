@@ -26,6 +26,7 @@ class Config:
     bootstrap_browse: bool
     browse_root: str                # chemin de navigation, ex. "PLC_1/DataBlocksGlobal"
     metrics_port: int
+    control_port: int               # contrôle par la console d'exploitation (réseau interne)
 
     @staticmethod
     def from_env() -> "Config":
@@ -48,4 +49,5 @@ class Config:
             bootstrap_browse=_bool("BOOTSTRAP_BROWSE", True),
             browse_root=e.get("BROWSE_ROOT", "PLC_1/DataBlocksGlobal"),
             metrics_port=int(e.get("METRICS_PORT", "9108")),
+            control_port=int(e.get("CONTROL_PORT", "9109")),
         )
