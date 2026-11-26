@@ -83,7 +83,9 @@ Les versions sont publiées par la CI : un tag Git `v0.2.0` construit et pousse 
 ## Historian
 
 - `historian.value` : une ligne par changement (`time`, `tag_id`, `value`, `quality` 0 bon / 1 incertain / 2 mauvais). Les booléens valent 0 ou 1.
-- Chunks de 6 h compressés après 12 h, conservation `HISTORIAN_RETENTION` (1 an par défaut).
+- Chunks de 6 h (`HISTORIAN_CHUNK_INTERVAL`) compressés après `HISTORIAN_COMPRESS_AFTER` (12 h, ou la moitié de la conservation si elle est plus courte), conservation `HISTORIAN_RETENTION` (1 an par défaut).
+- Plafond de taille `HISTORIAN_MAX_SIZE` (ex. `6GB`, aucun par défaut) : toutes les 5 minutes, tant que la base le dépasse, le plus ancien bloc des agrégats minute ou des données brutes est supprimé. Les données brutes encore utiles au recalcul des agrégats et les agrégats horaires ne sont jamais touchés. Le plafond doit laisser de la place aux images Docker et à Prometheus : environ 40 % du disque de Docker.
+- Purge manuelle des plus anciennes données d'un jeu (brut, agrégats 1 min, agrégats 1 h) : console `/systeme`, carte Stockage, bouton « Historian et purge », ou `./mesctl purge brut 6` (garde les 6 dernières heures). `./mesctl purge` seul affiche le volume par jeu.
 - `historian.value_1min` : agrégats à la minute (moyenne, min, max, dernière valeur), compressés, conservation `AGGREGATE_1MIN_RETENTION` (1 an).
 - `historian.value_1h` : agrégats horaires calculés depuis les agrégats minute, conservation `AGGREGATE_1H_RETENTION` (3 ans).
 - Entre deux changements, la valeur est la dernière connue : `historian.value_at(tag_id, instant)`, ou `locf()` dans les requêtes Grafana. Le collecteur réécrit la dernière valeur des tags immobiles toutes les 15 min pour borner ces recherches.

@@ -199,6 +199,20 @@ cmd_monitoring() {
   esac
 }
 
+cmd_purge() {
+  # Sans argument : volume de l'historian. Avec : supprime les données plus anciennes que N heures.
+  require_env
+  local sql
+  case "${1:-}" in
+    "") sql="SELECT jsonb_pretty(historian.stockage_etat())" ;;
+    brut|1min|1h)
+      [[ "${2:-}" =~ ^[0-9]+$ ]] || fail "usage : ./mesctl purge brut|1min|1h <heures à garder>"
+      sql="SELECT jsonb_pretty(historian.purger('$1', make_interval(hours => $2)))" ;;
+    *) fail "usage : ./mesctl purge [brut|1min|1h <heures à garder>]" ;;
+  esac
+  compose exec -T db psql -U mes -d mes -XAtq -v ON_ERROR_STOP=1 -c "$sql"
+}
+
 cmd_package() {
   # Construit l'archive hors ligne d'une version (sur le poste de build, pas sur site)
   local v=${1:-}; [ -n "$v" ] || fail "usage : ./mesctl package <version>"
@@ -222,6 +236,7 @@ case "${1:-help}" in
   package)  shift; cmd_package "$@" ;;
   discover) shift; cmd_discover "$@" ;;
   monitoring) shift; cmd_monitoring "$@" ;;
+  purge)    shift; cmd_purge "$@" ;;
   *) cat <<'EOF'
 mesctl - exploitation du MES v3
 
@@ -233,6 +248,7 @@ mesctl - exploitation du MES v3
   restore <fichier.dump>     restaure une sauvegarde
   discover [--demo]          découverte automatique des machines de l'automate et ajout au catalogue
   monitoring on|off          active ou coupe la surveillance technique (Prometheus, tableau Grafana « Système »)
+  purge [brut|1min|1h <h>]   volume de l'historian ; avec arguments, supprime les données plus anciennes que <h> heures
   status                     version, services, débit et retard de collecte, disque
   logs [service]             journaux
   start | stop               démarre ou arrête la pile

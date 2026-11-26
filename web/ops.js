@@ -258,7 +258,7 @@ function stopWarning(svc) {
 }
 
 // ----------------------------------------------------------------------------- 2 · Services et commandes
-function Services({ d, actions, admin, setConfirm, openLogs }) {
+function Services({ d, actions, admin, setConfirm, openLogs, toast }) {
   const journal = usePoll("/journal?n=60", 10000);
   const col = d.collecteur, hist = col && col.historisation;
   const app = d.application;
@@ -268,6 +268,7 @@ function Services({ d, actions, admin, setConfirm, openLogs }) {
   const VOL = { "db-data": "Base (historian, MES)", "prometheus-data": "Prometheus", "grafana-data": "Grafana", "collector-spool": "Tampon du collecteur", "ops-data": "Console", "sim-data": "Simulateur" };
   const VCOL = ["#2F5D8A", "#82A1CD", "#7FD3E3", "#06D16F", "#A9BDD6", "#5B7FA8"];
   const suspend = (min, label) => actions.hist({ actif: false, duree_min: min }, "Historisation suspendue " + label);
+  const [purge, setPurge] = useState(false);
   return html`<div class="svc-view">
     <div class="svc-top">
       <section class="tile" aria-label="Application">
@@ -300,7 +301,9 @@ function Services({ d, actions, admin, setConfirm, openLogs }) {
         <div class="vols">${vols.length ? vols.slice(0, 6).map((v, i) => html`<div><span class="dot" style=${{ background: VCOL[i % VCOL.length] }}></span>${VOL[v.name] || v.name}<b class="num">${octets(v.bytes)}</b></div>`)
           : html`<span class="sub">Taille des volumes en cours de calcul…</span>`}</div>
         ${volTotal > 0 && html`<div class="sub small">Volumes MES : ${octets(volTotal)} · mesuré à ${hhmm(d.volumes.at * 1000)}</div>`}
+        <div class="actions"><button type="button" class="sm" onClick=${() => setPurge(true)}>Historian et purge…</button></div>
       </section>
+      ${purge && html`<${Purge} admin=${admin} toast=${toast} onClose=${() => setPurge(false)} />`}
     </div>
     <section class="tile svc-table" aria-label="Services">
       <div class="th"><h2>Services</h2><span class="sub">${d.services.filter(s => s.running).length} / ${d.services.length} en service</span></div>
@@ -336,6 +339,57 @@ function Services({ d, actions, admin, setConfirm, openLogs }) {
         : html`<span class="sub">Aucune opération pour l'instant.</span>`}</div>
     </section>
   </div>`;
+}
+
+// Volume de l'historian par jeu de données, plafond de la base et purge manuelle des plus anciennes données
+const JEUX = { brut: "Données brutes", "1min": "Agrégats 1 min", "1h": "Agrégats 1 h" };
+const GARDER = { brut: [[1, "1 h"], [3, "3 h"], [6, "6 h"], [12, "12 h"], [24, "1 j"], [72, "3 j"]],
+  "1min": [[48, "2 j"], [168, "7 j"], [720, "30 j"], [2160, "90 j"]],
+  "1h": [[720, "30 j"], [2160, "90 j"], [8760, "1 an"]] };
+function Purge({ admin, toast, onClose }) {
+  const st = usePoll("/stockage", 0);
+  const [jeu, setJeu] = useState("brut");
+  const [garder, setGarder] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [sure, setSure] = useState(false);
+  const e = st.data;
+  const info = e && e.jeux.find(j => j.jeu === jeu);
+  const choix = info ? GARDER[jeu].filter(([h]) => h >= info.minimum_h) : [];
+  const g = choix.some(([h]) => h === garder) ? garder : (choix[0] || [null])[0];
+  const label = (choix.find(([h]) => h === g) || [0, ""])[1];
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r = await ops("/stockage/purge", { method: "POST", body: { jeu, garder_h: g } });
+      toast({ ok: `Purge terminée : ${r.chunks} bloc(s) supprimé(s), ${octets(r.liberes_octets)} libérés` });
+      st.reload();
+    } catch (err) { toast({ error: err.message }); }
+    setBusy(false); setSure(false);
+  };
+  return html`<${Dialog} title="Historian : volume et purge" onClose=${onClose}>
+    ${!e ? html`<p class="sub">${st.error || "Lecture de la base…"}</p>` : html`
+      <p class="sub" style="margin-top:0">Base : <b>${octets(e.base_octets)}</b>${e.plafond_octets > 0
+        ? html` sur un plafond de <b>${octets(e.plafond_octets)}</b> (au-delà, les plus anciennes données sont supprimées automatiquement)`
+        : " · aucun plafond (HISTORIAN_MAX_SIZE dans site.env)"}.</p>
+      <table><thead><tr><th>Jeu</th><th class="num">Taille</th><th class="num">Blocs</th><th>Depuis</th></tr></thead>
+        <tbody>${e.jeux.map(j => html`<tr><td>${JEUX[j.jeu]}</td><td class="num">${octets(j.octets)}</td><td class="num">${j.chunks}</td>
+          <td class="sub">${j.depuis ? new Date(j.depuis).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–"}</td></tr>`)}</tbody></table>
+      <h3 style="margin:16px 0 6px">Purger</h3>
+      <div class="actions">
+        <select value=${jeu} onChange=${ev => { setJeu(ev.target.value); setSure(false); }} aria-label="Jeu de données" disabled=${!admin}>
+          ${Object.entries(JEUX).map(([k, l]) => html`<option value=${k} selected=${k === jeu}>${l}</option>`)}</select>
+        <span class="sub">garder les</span>
+        <select value=${g} onChange=${ev => { setGarder(Number(ev.target.value)); setSure(false); }} aria-label="Durée à conserver" disabled=${!admin}>
+          ${choix.map(([h, l]) => html`<option value=${h} selected=${h === g}>${l}</option>`)}</select>
+        <span class="sub">les plus récents</span></div>
+      <p class="sub small">Suppression définitive, par blocs entiers. ${jeu === "brut"
+        ? `Les agrégats déjà calculés sont conservés. Minimum : ${info.minimum_h} h (recalcul des agrégats en cours).`
+        : jeu === "1min" ? "Les agrégats horaires sont conservés." : "Seuls les KPI du MES restent pour la période purgée."}</p>`}
+    <div class="row-end"><button type="button" onClick=${onClose}>Fermer</button>
+      ${e && (sure
+        ? html`<button type="button" class="stop" disabled=${busy || !admin || !g} onClick=${run}>${busy ? "Purge en cours…" : `Confirmer : ${JEUX[jeu].toLowerCase()} de plus de ${label}`}</button>`
+        : html`<button type="button" class="stop" disabled=${!admin || !g} onClick=${() => setSure(true)}>Purger…</button>`)}</div>
+  <//>`;
 }
 
 // ----------------------------------------------------------------------------- 3 · Simulation
@@ -614,7 +668,7 @@ function App() {
       <div class="view">
         ${!d ? html`<section class="tile"><p>${st.error ? "Agent d'exploitation injoignable : " + st.error : "Chargement…"}</p></section>`
         : view === "architecture" ? html`<${Architecture} d=${d} actions=${actions} admin=${admin} setConfirm=${setConfirm} openLogs=${setLogs} />`
-        : view === "services" ? html`<${Services} d=${d} actions=${actions} admin=${admin} setConfirm=${setConfirm} openLogs=${setLogs} />`
+        : view === "services" ? html`<${Services} d=${d} actions=${actions} admin=${admin} setConfirm=${setConfirm} openLogs=${setLogs} toast=${toast} />`
         : view === "simulation" ? html`<${Simulation} d=${d} actions=${actions} admin=${admin} toast=${toast} />`
         : html`<${GrafanaView} />`}
       </div>
