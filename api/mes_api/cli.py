@@ -46,6 +46,10 @@ async def demo_setup(conn) -> None:
             currents = await opc.read_values(client, [m["base_node"] + '."Courant"' for m in motors])
     except Exception:  # noqa: BLE001
         currents = [None] * len(motors)
+    # rattachement des moteurs aux lignes (synoptique du détail de ligne) : 8 moteurs par ligne
+    for i, m in enumerate(motors[:8 * len(lines)]):
+        await conn.execute("UPDATE catalog.machine SET attributes = attributes || $2 WHERE id = $1",
+                           m["id"], {"ligne": lines[i % len(lines)]["name"]})
     for m, c in zip(motors, currents):
         if not c:
             continue

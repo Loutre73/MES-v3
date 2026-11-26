@@ -44,3 +44,13 @@ def test_recipe_comparison_tolerance():
     tdef = {"params": [{"name": "V", "label": "V", "min": 0, "max": 100}, {"name": "T", "label": "T"}]}
     lines = compare_values(tdef, {"V": 50, "T": 80}, {"V": 50.4, "T": 90}, 0.5)
     assert [l["ecart"] for l in lines] == [False, True]
+
+
+def test_slow_intervals():
+    from mes_api.routes_lines import slow_intervals
+    step = timedelta(minutes=5)
+    buckets = [(h(i / 12), v) for i, v in enumerate([200, 100, 90, 200, 0, 50, 100])]
+    stops = [(h(5 / 12), h(6 / 12))]  # la tranche à 50 t/h est pendant un arrêt
+    out = slow_intervals(buckets, step, 200, stops)
+    assert out == [(h(1 / 12), h(3 / 12)), (h(6 / 12), h(7 / 12))]
+    assert slow_intervals(buckets, step, None, []) == []
