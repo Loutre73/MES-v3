@@ -104,7 +104,8 @@ services:
     build: ../web
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-80}:8080"
+      # WEB_BIND=127.0.0.1 : application joignable depuis ce poste seulement (conseillé avec AUTH_DISABLED)
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-80}:8080"
     depends_on:
       - api
       - grafana

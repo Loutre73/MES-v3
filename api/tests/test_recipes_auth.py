@@ -30,7 +30,8 @@ def test_password_and_token():
     assert auth.check_password("secret123", h) and not auth.check_password("autre", h)
     u = auth.User("jdupont", "chef_equipe", "J. Dupont")
     assert auth.read_token(auth.make_token(u)) == u
-    assert auth.read_token(auth.make_token(u)[:-2] + "00") is None
+    t = auth.make_token(u)
+    assert auth.read_token(t[:-1] + ("0" if t[-1] != "0" else "1")) is None   # signature altérée
 
 
 def test_require_roles():
