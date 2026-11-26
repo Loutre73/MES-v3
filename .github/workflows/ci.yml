@@ -21,7 +21,7 @@ jobs:
       - run: pip install -r collector/requirements.txt -r api/requirements.txt -r simulator/requirements.txt pytest httpx
       - run: cd collector && python -m pytest -q tests
       - run: cd api && python -m pytest -q tests
-      - run: python -m pytest -q ops/tests simulator/tests
+      - run: python -m pytest -q ops/tests simulator/tests deploy/mac/tests
       - name: Syntaxe de l'interface web
         run: for f in web/*.js; do node --check "$f"; done
 

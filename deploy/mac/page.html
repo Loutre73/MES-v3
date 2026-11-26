@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Poste Mac · MES v3</title>
+<style>
+:root {
+  --bg: #EEF3F9; --card: #FFFFFF; --text: #000B44; --text2: #4A5563; --fill: #EEF1F5; --line: #E1E6EE;
+  --primary: #1B2F41; --band: #1B2F41; --green: #06D16F; --orange: #FF9500; --red: #FF3B30; --sky: #82A1CD;
+  --red-t: #FFE5E3; --red-fg: #A3201A; --orange-t: #FFF1DC; --orange-fg: #8A4300; --green-t: #E3F7E8; --green-fg: #17703A;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0A141E; --card: #13212E; --text: #E8EEF6; --text2: #A9BDD6; --fill: #1C2D3D; --line: #263A4E;
+    --primary: #82A1CD; --band: #0F1C28; --red-t: #3A1715; --red-fg: #FF8A80; --orange-t: #3A2710; --orange-fg: #FFB45C;
+    --green-t: #0F3322; --green-fg: #5BE39E; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { background: var(--band); color: #fff; padding: 18px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+header .over { font-size: 12px; opacity: .7; text-transform: uppercase; letter-spacing: .06em; }
+header h1 { margin: 0; font-size: 22px; }
+header .sp { flex: 1; }
+header a { color: #fff; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; background: rgba(255,255,255,.12); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--sky); }
+.dot.on { background: var(--green); } .dot.off { background: var(--red); } .dot.wait { background: var(--orange); }
+main { max-width: 1180px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.card { background: var(--card); border-radius: 14px; padding: 18px 20px; box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.04); }
+.card h2 { margin: 0 0 4px; font-size: 16px; }
+.card p.sub { margin: 0 0 14px; color: var(--text2); font-size: 13px; }
+.wide { grid-column: 1 / -1; }
+.alert { grid-column: 1 / -1; padding: 12px 16px; border-radius: 12px; font-weight: 600; }
+.alert.rouge { background: var(--red-t); color: var(--red-fg); } .alert.orange { background: var(--orange-t); color: var(--orange-fg); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 14px; margin-bottom: 14px; }
+.kv span:nth-child(odd) { color: var(--text2); }
+.gauge { margin: 10px 0 14px; }
+.gauge .lbl { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+.gauge .bar { height: 10px; border-radius: 5px; background: var(--fill); overflow: hidden; }
+.gauge .bar i { display: block; height: 100%; background: var(--green); }
+.gauge .bar i.orange { background: var(--orange); } .gauge .bar i.rouge { background: var(--red); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--fill); color: var(--text); cursor: pointer; }
+button.primary { background: var(--primary); border-color: var(--primary); color: var(--card); }
+button.stop { background: var(--red); border-color: var(--red); color: #fff; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+select, input { font: inherit; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+input[type=number] { width: 80px; }
+label.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+label.row:last-of-type { border-bottom: 0; }
+label.row small { display: block; color: var(--text2); font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+th { color: var(--text2); font-weight: 600; }
+.ok { color: var(--green-fg); font-weight: 600; } .ko { color: var(--red-fg); font-weight: 600; }
+pre { background: var(--fill); border-radius: 10px; padding: 10px 12px; max-height: 240px; overflow: auto; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; margin: 10px 0 0; }
+.muted { color: var(--text2); font-size: 13px; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 12px; background: var(--primary); color: var(--card); font-weight: 600; z-index: 9; }
+.toast.bad { background: var(--red); color: #fff; }
+dialog { border: 0; border-radius: 14px; padding: 22px; max-width: 440px; background: var(--card); color: var(--text); }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+.sw { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <div><div class="over">MES v3 · ce Mac</div><h1>Poste Mac</h1></div>
+  <span class="pill" id="etat-pill"><i class="dot" id="etat-dot"></i><span id="etat-txt">Chargement…</span></span>
+  <span class="sp"></span>
+  <a id="lien-console" href="#">Ouvrir la console /systeme ↗</a>
+</header>
+<main id="main"></main>
+<dialog id="dlg"><h2 id="dlg-t"></h2><p id="dlg-x" class="muted"></p><div class="actions" style="justify-content:flex-end"><button id="dlg-no">Annuler</button><button id="dlg-ok" class="primary">Confirmer</button></div></dialog>
+<script>
+const CLE = "__CLE__";
+const GB = 1024 ** 3;
+let D = null, enCours = false;
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const go = b => b ? (b / GB).toFixed(1).replace(".", ",") + " Go" : "–";
+
+function toast(t, bad) {
+  const e = document.createElement("div"); e.className = "toast" + (bad ? " bad" : ""); e.textContent = t;
+  document.body.appendChild(e); setTimeout(() => e.remove(), 4500);
+}
+function confirmer(titre, texte, ok = "Confirmer", danger = false) {
+  return new Promise(res => {
+    const d = $("#dlg"); $("#dlg-t").textContent = titre; $("#dlg-x").textContent = texte;
+    const b = $("#dlg-ok"); b.textContent = ok; b.className = danger ? "stop" : "primary";
+    b.onclick = () => { d.close(); res(true); }; $("#dlg-no").onclick = () => { d.close(); res(false); };
+    d.showModal();
+  });
+}
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-Agent-Cle": CLE }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.erreur || "erreur " + r.status);
+  return j;
+}
+async function act(nom, params = {}) {
+  try { const j = await post("/api/action", { nom, params }); toast(j.ok); charger(); }
+  catch (e) { toast(e.message, true); }
+}
+const INTERRUPTION = "Le MES sera indisponible pendant 1 à 3 minutes et la collecte s'arrêtera pendant ce temps.";
+
+function jauge(titre, pct, droite) {
+  const c = pct >= D.seuils.rouge ? "rouge" : pct >= D.seuils.orange ? "orange" : "";
+  return `<div class="gauge"><div class="lbl"><span>${titre}</span><b>${droite}</b></div><div class="bar"><i class="${c}" style="width:${Math.min(100, pct)}%"></i></div></div>`;
+}
+
+function vue() {
+  const c = D.colima, marche = c.etat === "en_marche", op = D.operation, busy = op && !op.fini;
+  enCours = !!busy;
+  const dis = busy ? "disabled" : "";
+  $("#etat-dot").className = "dot " + (busy ? "wait" : marche ? "on" : "off");
+  $("#etat-txt").textContent = busy ? op.nom + "…" : !c.installe ? "Colima n'est pas installé" : marche ? "Colima en marche" : "Colima arrêté";
+  $("#lien-console").href = "http://localhost" + (D.web_port === "80" ? "" : ":" + D.web_port) + "/systeme";
+  const m = D.mac_disque, v = D.vm_disque;
+  const actuel = Math.round((c.disque || 0) / GB);
+  const tailles = []; for (let g = actuel + 1; g <= D.disque_max_go && tailles.length < 40; g++) tailles.push(g);
+  const ram = Math.floor(D.mac_memoire / GB), memMax = Math.max(2, ram - 4);
+  const memC = Math.round((c.memoire || 0) / GB), cpuC = c.cpus || 2;
+  const ret = (D.reglages.HISTORIAN_RETENTION.valeur || "1 year").match(/^(\d+)\s*(\w+?)s?$/) || [, "1", "year"];
+  const opt = (vals, cur) => vals.map(([v, t]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${t}</option>`).join("");
+  const maxSize = D.reglages.HISTORIAN_MAX_SIZE.valeur, pr = D.reglages.PROMETHEUS_RETENTION.valeur, prs = D.reglages.PROMETHEUS_RETENTION_SIZE.valeur;
+  const withCur = (vals, cur) => cur && !vals.some(x => x[0] === cur) ? [...vals, [cur, cur]] : vals;
+
+  $("#main").innerHTML = `
+  ${D.alertes.map(a => `<div class="alert ${a.niveau}">${esc(a.texte)}</div>`).join("")}
+  ${!D.site_env ? `<div class="alert orange">Fichier site.env introuvable dans ${esc(D.deploy)} : seules les commandes de Colima sont disponibles.</div>` : ""}
+
+  <section class="card">
+    <h2>Machine virtuelle Colima</h2>
+    <p class="sub">La machine dans laquelle tourne tout le MES. L'arrêter libère la mémoire et le processeur du Mac, pas la place disque.</p>
+    <div class="kv">
+      <span>État</span><span>${marche ? '<span class="ok">En marche</span>' : '<span class="ko">Arrêtée</span>'}</span>
+      <span>Processeurs</span><span>${c.cpus ?? "–"}</span>
+      <span>Mémoire</span><span>${go(c.memoire)}</span>
+      <span>Disque</span><span>${go(c.disque)}</span>
+    </div>
+    <div class="actions">
+      ${marche ? `<button class="stop" data-a="arreter" ${dis}>Arrêter</button><button data-a="redemarrer" ${dis}>Redémarrer</button>`
+               : `<button class="primary" data-a="demarrer" ${dis || (c.installe ? "" : "disabled")}>Démarrer</button>`}
+      ${D.vm_decalage_heure != null && Math.abs(D.vm_decalage_heure) > 5 ? `<button data-a="heure" ${dis}>Remettre à l'heure</button>` : ""}
+    </div>
+    <p style="margin:14px 0 0"><label class="sw"><input type="checkbox" id="auto" ${D.config.demarrage_auto ? "checked" : ""}> Démarrer Colima et le MES automatiquement à l'ouverture de session</label></p>
+  </section>
+
+  <section class="card">
+    <h2>Place disque</h2>
+    <p class="sub">Alerte orange à ${D.seuils.orange} %, rouge à ${D.seuils.rouge} %.</p>
+    ${v ? jauge("Disque de Colima", v.pct, `${go(v.utilise)} sur ${go(v.total)} · ${go(v.libre)} libres`) : '<p class="muted">Disque de Colima : visible quand Colima est en marche.</p>'}
+    ${jauge("Disque du Mac", m.pct, `${go(m.libre)} libres sur ${go(m.total)}`)}
+    <p class="muted">Place occupée sur le Mac par Colima : <b>${go(D.colima_fichier)}</b>. Après un ménage ou une purge, « Rendre la place au Mac » la réduit.</p>
+    ${D.docker.length ? `<table><tr><th>Dans Colima</th><th>Taille</th><th>Récupérable</th></tr>${D.docker.map(r => `<tr><td>${esc(r.type)}</td><td>${esc(r.taille)}</td><td>${esc(r.recuperable)}</td></tr>`).join("")}</table>` : ""}
+    <div class="actions" style="margin-top:14px">
+      <button data-a="menage" ${dis || (marche ? "" : "disabled")}>Faire le ménage Docker</button>
+      <button data-a="rendre_place" ${dis || (marche ? "" : "disabled")}>Rendre la place au Mac</button>
+    </div>
+    <p class="muted" style="margin-bottom:0">Le ménage supprime le cache de construction et les images inutilisées. Il ne touche jamais aux données du MES. Pour purger l'historian : console /systeme, carte Stockage.</p>
+  </section>
+
+  <section class="card">
+    <h2>Taille de la machine virtuelle</h2>
+    <p class="sub">Le disque peut être agrandi mais jamais réduit. ${D.seuils.mac_marge / GB} Go restent toujours libres sur le Mac.</p>
+    <label class="row"><span>Disque<small>actuellement ${actuel} Go</small></span>
+      ${tailles.length ? `<select id="disque">${tailles.map(g => `<option value="${g}">${g} Go</option>`).join("")}</select>` : '<span class="muted">pas assez de place sur le Mac</span>'}</label>
+    <div class="actions" style="margin:8px 0 16px"><button id="b-disque" ${dis || (tailles.length ? "" : "disabled")}>Agrandir le disque</button></div>
+    <label class="row"><span>Processeurs<small>sur ${D.mac_cpus} dans le Mac</small></span><select id="cpus">${Array.from({ length: D.mac_cpus || 1 }, (_, i) => i + 1).map(n => `<option ${n === cpuC ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+    <label class="row"><span>Mémoire<small>sur ${ram} Go dans le Mac, 4 Go toujours laissés au Mac</small></span><select id="memoire">${Array.from({ length: memMax - 1 }, (_, i) => i + 2).map(n => `<option value="${n}" ${n === memC ? "selected" : ""}>${n} Go</option>`).join("")}</select></label>
+    <div class="actions" style="margin-top:8px"><button id="b-res" ${dis}>Appliquer processeurs et mémoire</button></div>
+  </section>
+
+  <section class="card">
+    <h2>Réglages de conservation</h2>
+    <p class="sub">Remplace la modification de site.env à la main. Une copie de site.env est faite avant chaque changement.</p>
+    <label class="row"><span>Données brutes de l'historian<small>au-delà, elles sont purgées toutes les heures</small></span>
+      <span><input type="number" id="ret-n" min="1" max="9999" value="${ret[1]}"> <select id="ret-u">${opt([["hour", "heures"], ["day", "jours"], ["week", "semaines"], ["month", "mois"], ["year", "ans"]], ret[2].replace(/s$/, ""))}</select></span></label>
+    <label class="row"><span>Plafond de taille de la base<small>au-delà, les plus anciennes données sont supprimées</small></span>
+      <select id="maxsize">${opt(withCur([["", "aucun"], ["2GB", "2 Go"], ["4GB", "4 Go"], ["6GB", "6 Go"], ["8GB", "8 Go"], ["10GB", "10 Go"], ["15GB", "15 Go"], ["20GB", "20 Go"]], maxSize), maxSize)}</select></label>
+    <label class="row"><span>Métriques techniques (Prometheus) : durée</span>
+      <select id="pr">${opt(withCur([["1d", "1 jour"], ["3d", "3 jours"], ["7d", "7 jours"], ["15d", "15 jours"], ["30d", "30 jours"]], pr), pr)}</select></label>
+    <label class="row"><span>Métriques techniques : taille maximale</span>
+      <select id="prs">${opt(withCur([["500MB", "500 Mo"], ["1GB", "1 Go"], ["2GB", "2 Go"], ["4GB", "4 Go"]], prs), prs)}</select></label>
+    <div class="actions" style="margin:8px 0 16px"><button class="primary" id="b-reg" ${dis || (marche && D.site_env ? "" : "disabled")}>Appliquer les réglages</button></div>
+    <label class="row"><span>Surveillance technique (Prometheus et tableau « Système »)<small>la couper économise de la place et de la mémoire</small></span>
+      <input type="checkbox" id="surv" ${D.surveillance ? "checked" : ""} ${dis || (marche && D.site_env ? "" : "disabled")}></label>
+  </section>
+
+  <section class="card">
+    <h2>Services du MES</h2>
+    <p class="sub">Pour les démarrer ou les arrêter un par un : console /systeme.</p>
+    ${D.services.length ? `<table><tr><th>Service</th><th>État</th></tr>${D.services.map(s => `<tr><td>${esc(s.service)}</td><td class="${s.etat === "running" ? "ok" : "ko"}">${esc(s.statut || s.etat)}</td></tr>`).join("")}</table>` : `<p class="muted">${marche ? "Aucun service." : "Colima est arrêté."}</p>`}
+  </section>
+
+  <section class="card">
+    <h2>${op ? (busy ? "Opération en cours" : "Dernière opération") : "Opérations"}</h2>
+    ${op ? `<p class="sub">${esc(op.nom)} · <b class="${op.fini ? (op.ok ? "ok" : "ko") : ""}">${esc(op.etape)}</b></p><pre id="lignes">${esc(op.lignes.join("\n"))}</pre>` : '<p class="sub">Aucune opération depuis le démarrage de l\'agent.</p>'}
+    <h2 style="margin-top:16px">Journal</h2>
+    ${D.journal.length ? `<table>${D.journal.slice(0, 12).map(j => `<tr><td class="muted">${esc(j.t.replace("T", " ").slice(0, 16))}</td><td>${esc(j.action)}</td><td class="${j.ok ? "ok" : "ko"}">${j.ok ? "réussi" : "échec"}</td></tr>`).join("")}</table>` : '<p class="muted">Vide.</p>'}
+  </section>`;
+
+  const pre = $("#lignes"); if (pre) pre.scrollTop = pre.scrollHeight;
+  document.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
+    const a = b.dataset.a;
+    if (a === "arreter" && !await confirmer("Arrêter Colima ?", "Le MES s'arrête proprement (collecteur, puis base), puis la machine virtuelle s'éteint. Plus aucune donnée n'est collectée jusqu'au prochain démarrage.", "Arrêter", true)) return;
+    if (a === "redemarrer" && !await confirmer("Redémarrer Colima ?", INTERRUPTION, "Redémarrer")) return;
+    if (a === "menage" && !await confirmer("Faire le ménage Docker ?", "Supprime le cache de construction et les images inutilisées. Les données du MES ne sont pas touchées. La prochaine mise à jour sera un peu plus longue à construire.", "Faire le ménage")) return;
+    act(a);
+  });
+  $("#auto").onchange = async e => { try { toast((await post("/api/config", { demarrage_auto: e.target.checked })).ok); } catch (x) { toast(x.message, true); } };
+  const bd = $("#b-disque"); if (bd) bd.onclick = async () => {
+    const g = $("#disque").value;
+    if (await confirmer(`Agrandir le disque à ${g} Go ?`, `${INTERRUPTION} Attention : un disque agrandi ne peut plus être réduit.`, "Agrandir")) act("disque", { go: +g });
+  };
+  $("#b-res").onclick = async () => {
+    const cpus = +$("#cpus").value, memoire = +$("#memoire").value;
+    if (await confirmer(`${cpus} processeurs et ${memoire} Go de mémoire ?`, INTERRUPTION, "Appliquer")) act("ressources", { cpus, memoire });
+  };
+  $("#b-reg").onclick = async () => {
+    const n = Math.max(1, parseInt($("#ret-n").value, 10) || 1), u = $("#ret-u").value;
+    const valeurs = { HISTORIAN_RETENTION: `${n} ${u}${n > 1 ? "s" : ""}`, HISTORIAN_MAX_SIZE: $("#maxsize").value, PROMETHEUS_RETENTION: $("#pr").value, PROMETHEUS_RETENTION_SIZE: $("#prs").value };
+    if (await confirmer("Appliquer les réglages ?", "Les services concernés (base, collecteur, Prometheus) redémarrent : quelques secondes d'interruption. Les données plus anciennes que la nouvelle durée seront purgées dans l'heure.", "Appliquer")) act("reglages", { valeurs });
+  };
+  $("#surv").onchange = e => act("surveillance", { active: e.target.checked });
+}
+
+async function charger() {
+  try { const r = await fetch("/api/etat"); D = await r.json(); vue(); }
+  catch (e) { $("#etat-txt").textContent = "Agent injoignable"; }
+}
+// Pas de rafraîchissement pendant qu'un menu est ouvert ou une boîte de dialogue affichée
+setInterval(() => { const f = document.activeElement; if (!$("#dlg").open && !(f && /SELECT|INPUT/.test(f.tagName))) charger(); }, enCours ? 2000 : 5000);
+setInterval(() => { if (enCours && !$("#dlg").open) charger(); }, 2000);
+charger();
+</script>
+</body>
+</html>

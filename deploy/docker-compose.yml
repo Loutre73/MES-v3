@@ -3,8 +3,14 @@
 name: mes
 
 
+# Journaux des conteneurs limités à 3 x 10 Mo par service : sans limite, ils peuvent remplir le disque.
+x-logging: &journaux
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+
 services:
   db:
+    logging: *journaux
     image: timescale/timescaledb:2.17.2-pg16
     restart: unless-stopped
     environment:
@@ -26,6 +32,7 @@ services:
     shm_size: 1g
 
   migrate:
+    logging: *journaux
     image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-migrate:${MES_VERSION:-dev}
     build: ../db
     environment:
@@ -41,6 +48,7 @@ services:
     restart: "no"
 
   collector:
+    logging: *journaux
     image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-collector:${MES_VERSION:-dev}
     build: ../collector
     restart: unless-stopped
@@ -64,6 +72,7 @@ services:
     # Le collecteur doit joindre l'automate : sur site, prévoir l'accès au réseau automate.
 
   api:
+    logging: *journaux
     image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-api:${MES_VERSION:-dev}
     build:
       context: ..
@@ -100,6 +109,7 @@ services:
         condition: service_completed_successfully
 
   web:
+    logging: *journaux
     image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-web:${MES_VERSION:-dev}
     build: ../web
     restart: unless-stopped
@@ -114,6 +124,7 @@ services:
   # Agent d'exploitation : sert la console /systeme (architecture, services, historisation, simulation).
   # Indépendant de l'API : la console reste disponible quand l'application est arrêtée.
   ops:
+    logging: *journaux
     image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-ops:${MES_VERSION:-dev}
     build: ../ops
     restart: unless-stopped
@@ -132,6 +143,7 @@ services:
       - ops-data:/data
 
   grafana:
+    logging: *journaux
     image: grafana/grafana-oss:11.3.0
     restart: unless-stopped
     environment:
@@ -163,6 +175,7 @@ services:
 
   # Simulateur S7-1500 : développement, démonstration et tests (profil "sim")
   simulator:
+    logging: *journaux
     image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-simulator:${MES_VERSION:-dev}
     build: ../simulator
     profiles: ["sim"]
@@ -176,6 +189,7 @@ services:
   # ---- Surveillance technique (profil "monitoring") : tableau de bord Grafana « Système » ----
   # Prometheus collecte toutes les 10 s ; volume plafonné par PROMETHEUS_RETENTION_SIZE.
   prometheus:
+    logging: *journaux
     image: prom/prometheus:v2.55.1
     profiles: ["monitoring"]
     restart: unless-stopped
@@ -188,6 +202,7 @@ services:
 
   # Hôte Docker : CPU, mémoire, disques (IO/s, débit, occupation), réseau, charge
   node-exporter:
+    logging: *journaux
     image: prom/node-exporter:v1.8.2
     profiles: ["monitoring"]
     restart: unless-stopped
@@ -204,6 +219,7 @@ services:
   # Petit exporter maison (bibliothèque standard Python) : cAdvisor ne reconnaît pas les conteneurs
   # avec le magasin d'images containerd de Docker 29+.
   docker-exporter:
+    logging: *journaux
     image: python:3.12-slim
     profiles: ["monitoring"]
     restart: unless-stopped
@@ -215,6 +231,7 @@ services:
 
   # Processus de l'hôte regroupés par nom : postgres, python (collecteur, API), nginx, grafana...
   process-exporter:
+    logging: *journaux
     image: ncabatoff/process-exporter:0.8.7
     profiles: ["monitoring"]
     restart: unless-stopped
@@ -225,6 +242,7 @@ services:
 
   # PostgreSQL / TimescaleDB : connexions, transactions, cache, verrous, taille
   postgres-exporter:
+    logging: *journaux
     image: prometheuscommunity/postgres-exporter:v0.16.0
     profiles: ["monitoring"]
     restart: unless-stopped
