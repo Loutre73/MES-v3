@@ -10,7 +10,9 @@ Bibliothèque standard Python seulement. Sécurité :
 - session MES vérifiée ici (même cookie signé que l'API, clé SECRET_KEY) ;
 - lecture pour toute session, actions réservées au rôle admin ;
 - liste fermée d'actions Docker (start, stop, restart, logs) sur les seuls services du projet ;
-  aucune création, suppression de conteneur ou de volume.
+  aucune création, suppression de conteneur ou de volume ;
+- base de données : uniquement les fonctions historian.stockage_etat() et historian.purger(), appelées
+  par psql dans le conteneur de la base, avec des paramètres vérifiés ici (aucun SQL libre).
 """
 from __future__ import annotations
 
@@ -103,10 +105,13 @@ class UnixConnection(http.client.HTTPConnection):
         self.sock.connect(SOCKET)
 
 
-def docker(method: str, path: str, timeout: float = 10, raw: bool = False):
+def docker(method: str, path: str, timeout: float = 10, raw: bool = False, body: dict | None = None):
     conn = UnixConnection(timeout)
     try:
-        conn.request(method, path)
+        if body is None:
+            conn.request(method, path)
+        else:
+            conn.request(method, path, json.dumps(body).encode(), {"Content-Type": "application/json"})
         r = conn.getresponse()
         body = r.read()
         if r.status >= 400:
@@ -135,6 +140,16 @@ def demux(raw: bytes) -> list[str]:
     for line in raw.decode(errors="replace").splitlines():
         out.append(line)
     return out
+
+
+def split_streams(raw: bytes) -> tuple[str, str]:
+    """Sortie d'un exec Docker sans TTY : (stdout, stderr)."""
+    out, err, i = [], [], 0
+    while i + 8 <= len(raw):
+        size = int.from_bytes(raw[i + 4:i + 8], "big")
+        (err if raw[i] == 2 else out).append(raw[i + 8:i + 8 + size])
+        i += 8 + size
+    return b"".join(out).decode(errors="replace"), b"".join(err).decode(errors="replace")
 
 
 def parse_time(s: str) -> float:
@@ -380,6 +395,39 @@ def service_action(svc: str, action: str) -> None:
     docker("POST", f"/containers/{cid}/{action}?t=15", timeout=60)
 
 
+# ----------------------------------------------------------------------------- stockage de l'historian
+JEUX = {"brut": "Données brutes", "1min": "Agrégats 1 min", "1h": "Agrégats 1 h"}
+
+
+def db_json(sql: str, timeout: float = 600):
+    """Exécute une requête renvoyant une valeur JSON, par psql dans le conteneur de la base."""
+    cid = container_id("db")
+    ex = docker("POST", f"/containers/{cid}/exec", body={
+        "Cmd": ["psql", "-U", "mes", "-d", "mes", "-XAtq", "-v", "ON_ERROR_STOP=1", "-c", sql],
+        "AttachStdout": True, "AttachStderr": True})
+    raw = docker("POST", f"/exec/{ex['Id']}/start", timeout=timeout, raw=True, body={"Detach": False, "Tty": False})
+    out, err = split_streams(raw)
+    code = (docker("GET", f"/exec/{ex['Id']}/json") or {}).get("ExitCode")
+    if code != 0:
+        msg = next((ln.split("ERROR:", 1)[1].strip() for ln in err.splitlines() if "ERROR:" in ln), err.strip() or out.strip())
+        raise RuntimeError(msg or f"psql : code {code}")
+    return json.loads(out.strip() or "null")
+
+
+def purge_sql(jeu: str, garder_h) -> str:
+    """Requête de purge, construite uniquement à partir de valeurs vérifiées."""
+    if jeu not in JEUX:
+        raise ValueError(f"jeu de données inconnu : {jeu}")
+    if isinstance(garder_h, bool) or not isinstance(garder_h, int) or not 1 <= garder_h <= 24 * 365 * 10:
+        raise ValueError("durée à conserver invalide (heures entières, de 1 à 87 600)")
+    return f"SELECT historian.purger('{jeu}', make_interval(hours => {garder_h}))::text"
+
+
+def describe_purge(jeu: str, garder_h: int, r: dict) -> str:
+    garde = f"{garder_h // 24} j" if garder_h % 24 == 0 else f"{garder_h} h"
+    return f"Purge : {JEUX[jeu].lower()} de plus de {garde} ({r.get('chunks', 0)} blocs, {r.get('liberes_octets', 0) / 1e6:.0f} Mo libérés)"
+
+
 def overview(user: dict) -> dict:
     with SAMPLER.lock:
         containers = dict(SAMPLER.containers)
@@ -474,6 +522,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.err(404, str(e))
             except Exception as e:  # noqa: BLE001
                 return self.err(502, str(e))
+        if path == "/api/ops/stockage":
+            try:
+                return self.send(200, db_json("SELECT historian.stockage_etat()::text", timeout=30))
+            except LookupError as e:
+                return self.err(404, str(e))
+            except Exception as e:  # noqa: BLE001
+                return self.err(503, f"Base indisponible : {e}")
         if path == "/api/ops/historisation":
             r = http_json("GET", COLLECTOR_URL + "/historisation")
             return self.send(200, r) if r is not None else self.err(503, "Collecteur injoignable")
@@ -539,6 +594,22 @@ class Handler(BaseHTTPRequestHandler):
             e = journal_add(who, f"Application {verb} (collecteur, API, Grafana)", not errors, " ; ".join(errors))
             SAMPLER.sample_containers()
             return self.send(200 if not errors else 502, e if not errors else {"detail": " ; ".join(errors)})
+        if method == "POST" and path == "/api/ops/stockage/purge":
+            jeu, garder_h = body.get("jeu"), body.get("garder_h")
+            try:
+                sql = purge_sql(jeu, garder_h)
+            except ValueError as e:
+                return self.err(400, str(e))
+            try:
+                r = db_json(sql)
+            except LookupError as e:
+                return self.err(404, str(e))
+            except Exception as e:  # noqa: BLE001
+                journal_add(who, f"Purge : {JEUX[jeu].lower()}", False, str(e))
+                return self.err(502, str(e))
+            journal_add(who, describe_purge(jeu, garder_h, r))
+            threading.Thread(target=SAMPLER.sample_volumes, daemon=True).start()
+            return self.send(200, r)
         if method == "PUT" and path == "/api/ops/historisation":
             r = http_json("PUT", COLLECTOR_URL + "/historisation", body)
             if r is None:

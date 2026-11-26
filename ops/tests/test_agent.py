@@ -49,3 +49,24 @@ def test_libelles_du_journal():
 def test_acces_sans_identifiant(monkeypatch):
     monkeypatch.setattr(agent, "AUTH_DISABLED", True)
     assert agent.read_session(None)["role"] == "admin"
+
+
+def test_purge_parametres_verifies():
+    assert agent.purge_sql("brut", 12) == "SELECT historian.purger('brut', make_interval(hours => 12))::text"
+    for jeu, h in (("brut'; DROP TABLE x; --", 12), ("1min", "12"), ("1h", 0), ("1h", True), ("brut", 10**9)):
+        try:
+            agent.purge_sql(jeu, h)
+        except ValueError:
+            continue
+        raise AssertionError(f"{jeu!r} {h!r} accepté")
+
+
+def test_sortie_exec_docker():
+    raw = b"\x01\x00\x00\x00\x00\x00\x00\x03{}\n\x02\x00\x00\x00\x00\x00\x00\x0bERROR:  x\n"
+    assert agent.split_streams(raw) == ("{}\n", "ERROR:  x\n")
+
+
+def test_libelle_de_purge():
+    r = {"chunks": 3, "liberes_octets": 2_500_000_000}
+    assert agent.describe_purge("1min", 720, r) == "Purge : agrégats 1 min de plus de 30 j (3 blocs, 2500 Mo libérés)"
+    assert agent.describe_purge("brut", 6, r).startswith("Purge : données brutes de plus de 6 h")

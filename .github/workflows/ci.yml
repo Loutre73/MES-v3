@@ -97,6 +97,14 @@ jobs:
           curl $J -X POST -d '{}' http://localhost/api/ops/application/start > /dev/null
           for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost/api/sante && break; sleep 2; done
           curl -sf http://localhost/api/sante
+          # historian : état, purge (refusée sous le minimum protégé), plafond de taille installé
+          curl $J http://localhost/api/ops/stockage | python3 -c "import sys,json; d=json.load(sys.stdin); print(d); assert [j['jeu'] for j in d['jeux']] == ['brut', '1min', '1h'] and d['base_octets'] > 0"
+          curl $J -X POST -d '{"jeu": "brut", "garder_h": 48}' http://localhost/api/ops/stockage/purge | python3 -c "import sys,json; d=json.load(sys.stdin); print(d); assert d['jeu'] == 'brut'"
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -b cj -H Content-Type:application/json -X POST -d '{"jeu": "brut", "garder_h": 1}' http://localhost/api/ops/stockage/purge)" = 502 ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -b cj -H Content-Type:application/json -X POST -d '{"jeu": "tout", "garder_h": 1}' http://localhost/api/ops/stockage/purge)" = 400 ]
+          ./mesctl purge 1h 8760
+          docker compose --env-file site.env exec -T db psql -U mes -d mes -Atc "CALL historian.garde_volume(0, '{}')"
+          [ "$(docker compose --env-file site.env exec -T db psql -U mes -d mes -Atc "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = 'garde_volume'")" = 1 ]
           curl $J "http://localhost/api/ops/journal?n=10"
       - name: Supervision technique (toutes les cibles Prometheus remontent)
         working-directory: deploy
