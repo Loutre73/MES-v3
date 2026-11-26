@@ -89,7 +89,9 @@ export function Planning({ user }) {
   };
 
   const selShift = sel && byId[sel.id];
-  return html`<div class="view" onClick=${e => { if (sel && !e.target.closest(".pl-pop, .pl-bar")) setSel(null); }}>
+  // clic hors du menu : le ferme. Un bouton que son propre clic a retiré de la page (« Supprimer » remplacé
+  // par la confirmation, rendu avant la fin de la propagation) n'est pas un clic hors du menu.
+  return html`<div class="view" onClick=${e => { if (sel && e.target.isConnected && !e.target.closest(".pl-pop, .pl-bar")) setSel(null); }}>
     <${Band} over=${`${fWeek.format(start)} – ${fWeek.format(end)}`} title="Planning">
       <div class="seg" role="group" aria-label="Semaine">
         <button type="button" onClick=${() => { setOffset(offset - 1); setSel(null); }} aria-label="Semaine précédente">‹</button>
