@@ -1,8 +1,8 @@
 """Applique les migrations SQL dans l'ordre, puis les paramètres du site.
 
 Idempotent : peut être relancé à chaque démarrage ou mise à jour.
-Variables : DATABASE_URL, HISTORIAN_RETENTION, AGGREGATE_1MIN_RETENTION, AGGREGATE_1H_RETENTION,
-MES_READER_PASSWORD.
+Variables : DATABASE_URL, HISTORIAN_RETENTION, HISTORIAN_CHUNK_INTERVAL, AGGREGATE_1MIN_RETENTION,
+AGGREGATE_1H_RETENTION, MES_READER_PASSWORD.
 """
 import asyncio
 import logging
@@ -50,10 +50,33 @@ async def main() -> int:
         "historian.value_1min": os.environ.get("AGGREGATE_1MIN_RETENTION", "1 year"),
         "historian.value_1h": os.environ.get("AGGREGATE_1H_RETENTION", "3 years"),
     }
+    # Purge vérifiée toutes les heures : une conservation courte (quelques heures) est respectée
+    # à la taille d'un chunk près.
     for rel, keep in policies.items():
         await conn.execute("SELECT remove_retention_policy($1::regclass, if_exists => true)", rel)
-        await conn.execute("SELECT add_retention_policy($1::regclass, $2::text::interval)", rel, keep)
+        await conn.execute(
+            "SELECT add_retention_policy($1::regclass, $2::text::interval, schedule_interval => interval '1 hour')", rel, keep)
         log.info("conservation de %s : %s", rel, keep)
+
+    # Taille des chunks bruts : la purge supprime des chunks entiers, donc les données brutes sont
+    # gardées entre HISTORIAN_RETENTION et HISTORIAN_RETENTION + HISTORIAN_CHUNK_INTERVAL.
+    # S'applique aux nouveaux chunks seulement.
+    chunk = os.environ.get("HISTORIAN_CHUNK_INTERVAL") or "6 hours"
+    await conn.execute("SELECT set_chunk_time_interval('historian.value', $1::text::interval)", chunk)
+    log.info("chunks de historian.value : %s", chunk)
+
+    # Le rafraîchissement des agrégats ne doit jamais recalculer une période déjà purgée des
+    # données brutes, sinon les agrégats de cette période seraient effacés.
+    raw_keep = policies["historian.value"]
+    for view, offset, end, every in (("historian.value_1min", "2 hours", "1 minute", "1 minute"),
+                                     ("historian.value_1h", "1 day", "1 hour", "15 minutes")):
+        start = await conn.fetchval(
+            "SELECT least($1::text::interval, $2::text::interval - interval '1 hour')::text", offset, raw_keep)
+        await conn.execute("SELECT remove_continuous_aggregate_policy($1::regclass, if_not_exists => true)", view)
+        await conn.execute(
+            "SELECT add_continuous_aggregate_policy($1::regclass, start_offset => $2::text::interval,"
+            " end_offset => $3::text::interval, schedule_interval => $4::text::interval)", view, start, end, every)
+        log.info("rafraîchissement de %s : fenêtre de %s", view, start)
 
     pwd = os.environ.get("MES_READER_PASSWORD")
     if pwd:
