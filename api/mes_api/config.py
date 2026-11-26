@@ -26,6 +26,8 @@ class Settings:
     ldap_group_roles: str = os.environ.get("AUTH_LDAP_GROUP_ROLES", "")           # ex. MES_Admins=admin;MES_Chefs=chef_equipe
     workers: bool = os.environ.get("WORKERS", "true").lower() in ("1", "true", "oui", "yes")
     timezone: str = os.environ.get("SITE_TIMEZONE", "Europe/Paris")
+    # Accès sans identifiant (poste de développement ou démonstration) : chaque visiteur est administrateur.
+    auth_disabled: bool = os.environ.get("AUTH_DISABLED", "false").lower() in ("1", "true", "oui", "yes")
 
 
 settings = Settings()

@@ -40,6 +40,8 @@ COLLECTOR_URL = os.environ.get("COLLECTOR_CONTROL_URL", "http://collector:9109")
 SIMULATOR_URL = os.environ.get("SIMULATOR_CONTROL_URL", "http://simulator:8090")
 API_METRICS_URL = os.environ.get("API_METRICS_URL", "http://api:8000/metrics")
 COOKIE = "mes_session"
+# Accès sans identifiant (poste de développement ou démonstration) : chaque visiteur est administrateur.
+AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() in ("1", "true", "oui", "yes")
 
 # Services connus : libellé, couche, et ce que la console a le droit d'en faire.
 # web et l'agent servent la console elle-même : ni arrêt ni redémarrage depuis la console.
@@ -66,6 +68,8 @@ ACTIONS = {"start", "stop", "restart"}
 # ----------------------------------------------------------------------------- session MES
 def read_session(cookie_header: str | None) -> dict | None:
     """Vérifie le cookie de session signé par l'API (même format que mes_api.auth.make_token)."""
+    if AUTH_DISABLED:
+        return {"username": "admin", "role": "admin", "display_name": "Administrateur (accès libre)", "auth": False}
     if not cookie_header or not SECRET:
         return None
     token = None
@@ -581,6 +585,8 @@ def describe_hist(body: dict) -> str:
 
 
 def main() -> None:
+    if AUTH_DISABLED:
+        print("AUTH_DISABLED : accès sans identifiant, chaque visiteur est administrateur", flush=True)
     if not SECRET:
         print("SECRET_KEY absent : aucune session ne sera acceptée", flush=True)
     threading.Thread(target=SAMPLER.loop, daemon=True).start()

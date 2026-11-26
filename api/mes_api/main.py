@@ -33,6 +33,8 @@ async def lifespan(app: FastAPI):
     await typedefs.sync_machine_types()
     await typedefs.sync_recipe_types()
     await auth.ensure_admin()
+    if settings.auth_disabled:
+        log.warning("AUTH_DISABLED : accès sans identifiant, chaque visiteur est administrateur")
     tasks = workers.start_all() if settings.workers else []
     yield
     for t in tasks:
@@ -73,7 +75,7 @@ async def logout(response: Response):
 @app.get("/api/session")
 async def me(user: auth.User = Depends(auth.current_user)):
     return {"username": user.username, "role": user.role, "display_name": user.display_name,
-            "version": app.version, "ldap": bool(settings.ldap_url)}
+            "version": app.version, "ldap": bool(settings.ldap_url), "auth": not settings.auth_disabled}
 
 
 GRAFANA_ROLE = {"admin": "Admin", "maintenance": "Viewer", "chef_equipe": "Viewer", "operateur": "Viewer"}

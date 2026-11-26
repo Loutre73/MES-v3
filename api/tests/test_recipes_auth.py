@@ -41,3 +41,17 @@ def test_require_roles():
         dep(op)
     with pytest.raises(HTTPException):   # sans rôle : administrateur seulement
         auth.require()(chef)
+
+
+def test_acces_sans_identifiant(monkeypatch):
+    from dataclasses import replace
+
+    from mes_api import auth
+
+    monkeypatch.setattr(auth, "settings", replace(auth.settings, auth_disabled=True))
+
+    class Req:
+        cookies = {}
+
+    u = auth.current_user(Req())
+    assert u.role == "admin"
