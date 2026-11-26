@@ -100,7 +100,7 @@ async def update_shift(sid: int, body: ShiftUpdate, user: User = Depends(require
             _check(new)
             await _no_overlap(conn, new, exclude=sid)
             await conn.execute(
-                """UPDATE mes.shift SET line_id = $2, starts_at = $3, ends_at = $4, team = $5, target_t = $6, recipe_id = $7,
+                """UPDATE mes.shift SET line_id = $2, starts_at = $3, ends_at = $4, team = $5, target_t = $6, recipe_id = (SELECT id FROM mes.recipe WHERE id = $7 AND deleted_at IS NULL),
                           comment = $8 WHERE id = $1""",
                 sid, new.line_id, new.starts_at, new.ends_at, new.team, new.target_t, new.recipe_id, new.comment)
             await planning.replace_stops(conn, sid, new.line_id, new.stops, user.username)
