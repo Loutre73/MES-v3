@@ -380,15 +380,11 @@ async def energy_analysis(jours: int = 7, depuis: datetime | None = None, jusqua
             """SELECT m.id, g.id AS tag_id, m.name AS compteur, m.attributes->>'ligne' AS line, m.attributes->>'usage' AS usage
                FROM catalog.machine m JOIN catalog.tag g ON g.machine_id = m.id AND g.role = 'compteur_energie'
                WHERE m.enabled ORDER BY m.name"""))
-<<<<<<< HEAD
         # tonnage des lignes lu sur la même fenêtre et de la même façon que l'énergie (ratio kWh/t cohérent)
         ton = {r["tag_id"]: r["line"] for r in await conn.fetch(
             """SELECT g.id AS tag_id, m.name AS line FROM catalog.machine m JOIN catalog.tag g ON g.machine_id = m.id
                AND g.role = 'compteur_tonnage' WHERE m.enabled""")}
         tags = [m["tag_id"] for m in meters] + list(ton)
-=======
-        tags = [m["tag_id"] for m in meters]
->>>>>>> 8ee79a02ccf31d2a31540c58ac0b4f8c1d2030a3
         samples: dict[int, list] = {}
         if fine:
             sql = """SELECT tag_id, bucket, last FROM historian.value_1min WHERE tag_id = ANY($1) AND bucket >= $2 AND bucket < $3
@@ -419,20 +415,11 @@ async def energy_analysis(jours: int = 7, depuis: datetime | None = None, jusqua
                    WHERE machine_id = ANY($1) AND coalesce(ends_at, $3) > $2 AND starts_at < $3""",
                 list(names), start, end):
             line_stops[names[r["machine_id"]]].append((r["starts_at"], r["ends_at"]))
-<<<<<<< HEAD
-=======
-        lignes = db.rows(await conn.fetch(
-            """SELECT m.name AS line, sum(k.energy_kwh) AS kwh, sum(k.tonnage_t) AS tonnage_t,
-                      sum(k.energy_kwh) / nullif(sum(k.tonnage_t) FILTER (WHERE k.energy_kwh IS NOT NULL), 0) AS kwh_per_t
-               FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id
-               WHERE s.starts_at >= $1 AND s.starts_at < $2 GROUP BY 1 ORDER BY 1""", start, end))
->>>>>>> 8ee79a02ccf31d2a31540c58ac0b4f8c1d2030a3
         puissance = await conn.fetchval(
             """SELECT sum(last) FROM (SELECT DISTINCT ON (g.id) v.value AS last FROM catalog.tag g JOIN historian.value v ON v.tag_id = g.id
                WHERE g.role = 'puissance' AND g.enabled AND v.time > now() - interval '15 minutes' ORDER BY g.id, v.time DESC) x""")
     by_day = end - start > timedelta(days=2)
     serie, compteurs, total = energy_split.split(meters, samples, seeds, line_stops, start, end, step, workers.TZ, by_day)
-<<<<<<< HEAD
     tonnage = {ln: 0.0 for ln in line_stops}
     for tag, ln in ton.items():
         tonnage[ln] = tonnage.get(ln, 0.0) + sum(d for _, d in energy_split.deltas(seeds.get(tag), samples.get(tag, [])))
@@ -443,9 +430,6 @@ async def energy_analysis(jours: int = 7, depuis: datetime | None = None, jusqua
     lignes = [{"line": ln, "kwh": kwh_line.get(ln, 0.0), "tonnage_t": t, "kwh_per_t": kwh_line.get(ln, 0.0) / t if t else None}
               for ln, t in sorted(tonnage.items())]
     tons = sum(tonnage.values())
-=======
-    tons = sum(r["tonnage_t"] or 0 for r in lignes)
->>>>>>> 8ee79a02ccf31d2a31540c58ac0b4f8c1d2030a3
     return {"debut": start, "fin": end, "pas": "jour" if by_day else "heure", "serie": serie, "compteurs": compteurs,
             "total": {**total, "tonnage_t": tons, "kwh_per_t": total["kwh"] / tons if tons else None},
             "lignes": lignes, "puissance_kw": puissance}
