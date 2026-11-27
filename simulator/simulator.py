@@ -116,6 +116,16 @@ class Plant:
         self._touched: dict[int, Var] = {}
         self._overridden: dict[int, Var] = {}
 
+    def meter_line(self, inst: Instance) -> Instance | None:
+        """Ligne d'un compteur, même convention que la démo (mes_api.cli) : les compteurs sont
+        répartis à tour de rôle sur les lignes, 4 par ligne ; les suivants sont des utilités."""
+        if "line" not in inst.state:
+            lines = sorted((i for i in self.instances if i.struct == "ligne"), key=lambda i: i.name)
+            meters = sorted((i for i in self.instances if i.struct == "compteur_energie"), key=lambda i: i.name)
+            k = meters.index(inst)
+            inst.state["line"] = lines[k % len(lines)] if lines and k < 4 * len(lines) else None
+        return inst.state["line"]
+
     def bind_engine(self, engine: Engine) -> None:
         self.engine = engine
         engine.bind(self.instances, {k: [m for m, _ in v] for k, v in STRUCTS.items()})
@@ -223,6 +233,10 @@ class Plant:
             elif inst.struct == "compteur_energie":
                 amp = R["amplitude_pct"] / 100.0
                 kw = s["base_kw"] * (1 + amp * math.sin(self.clock / 600) + r.gauss(0, R["bruit_pct"] / 100.0))
+                # compteur rattaché à une ligne : ligne à l'arrêt, il ne reste que la charge de veille
+                ln = self.meter_line(inst)
+                if ln is not None and not ln.vars["Marche"].raw:
+                    kw *= 0.25
                 self.set(inst, "Puissance_kW", round(kw, 1))
                 # l'énergie intègre la puissance publiée (effets des scénarios compris)
                 self.set(inst, "Energie_kWh", round(v["Energie_kWh"].raw + float(v["Puissance_kW"].value) * dt / 3600.0, 3))

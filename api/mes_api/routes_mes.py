@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from . import db, workers
+from . import energy as energy_split
 from .auth import ROLES, User, current_user, hash_password, require
 
 router = APIRouter(prefix="/api", tags=["exploitation"])
@@ -359,6 +360,71 @@ async def energy(jours: int = 7, depuis: datetime | None = None, jusqua: datetim
             """SELECT sum(last) FROM (SELECT DISTINCT ON (g.id) v.value AS last FROM catalog.tag g JOIN historian.value v ON v.tag_id = g.id
                WHERE g.role = 'puissance' AND g.enabled AND v.time > now() - interval '15 minutes' ORDER BY g.id, v.time DESC) x""")
     return {"par_shift": par_shift, "par_compteur": par_compteur, "puissance_kw": puissance}
+
+
+@router.get("/energie/analyse")
+async def energy_analysis(jours: int = 7, depuis: datetime | None = None, jusqua: datetime | None = None,
+                          _: User = Depends(current_user)):
+    """Consommation en production et hors production, par compteur et dans le temps (heure ou journée de 6 h à 6 h)."""
+    now = datetime.now(timezone.utc)
+    end = min(jusqua or now, now)
+    start = depuis or (end - timedelta(days=max(1, min(jours, 62))))
+    if end <= start:
+        raise HTTPException(400, "Période vide")
+    if end - start > timedelta(days=62):
+        start = end - timedelta(days=62)
+    fine = end - start <= timedelta(days=3)
+    step = 60 if fine else 3600
+    async with db.pool().acquire() as conn:
+        meters = db.rows(await conn.fetch(
+            """SELECT m.id, g.id AS tag_id, m.name AS compteur, m.attributes->>'ligne' AS line, m.attributes->>'usage' AS usage
+               FROM catalog.machine m JOIN catalog.tag g ON g.machine_id = m.id AND g.role = 'compteur_energie'
+               WHERE m.enabled ORDER BY m.name"""))
+        tags = [m["tag_id"] for m in meters]
+        samples: dict[int, list] = {}
+        if fine:
+            sql = """SELECT tag_id, bucket, last FROM historian.value_1min WHERE tag_id = ANY($1) AND bucket >= $2 AND bucket < $3
+                     ORDER BY tag_id, bucket"""
+        else:
+            # agrégats horaires matérialisés, et les dernières heures recalculées depuis les agrégats minute
+            # (l'agrégat horaire n'est rafraîchi qu'avec retard)
+            sql = """SELECT tag_id, bucket, last FROM (
+                       SELECT tag_id, bucket, last FROM historian.value_1h
+                       WHERE tag_id = ANY($1) AND bucket >= $2 AND bucket < least($3, date_trunc('hour', now()) - interval '3 hours')
+                       UNION ALL
+                       SELECT tag_id, time_bucket('1 hour', bucket), last(last, bucket) FROM historian.value_1min
+                       WHERE tag_id = ANY($1) AND bucket >= greatest($2, date_trunc('hour', now()) - interval '3 hours') AND bucket < $3
+                       GROUP BY 1, 2) x ORDER BY tag_id, bucket"""
+        for r in await conn.fetch(sql, tags, start, end):
+            samples.setdefault(r["tag_id"], []).append((r["bucket"], r["last"]))
+        seeds = {r["g"]: r["v"] for r in await conn.fetch(
+            """SELECT g, coalesce(historian.value_at(g, $2), (SELECT value FROM historian.value WHERE tag_id = g AND time >= $2
+                                                             ORDER BY time LIMIT 1)) AS v
+               FROM unnest($1::int[]) g""", tags, start)}  # collecte démarrée en cours de période : première valeur
+        line_rows = await conn.fetch(
+            """SELECT m.id, m.name FROM catalog.machine m JOIN catalog.machine_type t ON t.id = m.type_id
+               WHERE m.enabled AND (t.definition->>'track_stops')::boolean""")
+        line_stops = {ln["name"]: [] for ln in line_rows}
+        names = {ln["id"]: ln["name"] for ln in line_rows}
+        for r in await conn.fetch(
+                """SELECT machine_id, starts_at, coalesce(ends_at, $3) AS ends_at FROM mes.stop_event
+                   WHERE machine_id = ANY($1) AND coalesce(ends_at, $3) > $2 AND starts_at < $3""",
+                list(names), start, end):
+            line_stops[names[r["machine_id"]]].append((r["starts_at"], r["ends_at"]))
+        lignes = db.rows(await conn.fetch(
+            """SELECT m.name AS line, sum(k.energy_kwh) AS kwh, sum(k.tonnage_t) AS tonnage_t,
+                      sum(k.energy_kwh) / nullif(sum(k.tonnage_t) FILTER (WHERE k.energy_kwh IS NOT NULL), 0) AS kwh_per_t
+               FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id
+               WHERE s.starts_at >= $1 AND s.starts_at < $2 GROUP BY 1 ORDER BY 1""", start, end))
+        puissance = await conn.fetchval(
+            """SELECT sum(last) FROM (SELECT DISTINCT ON (g.id) v.value AS last FROM catalog.tag g JOIN historian.value v ON v.tag_id = g.id
+               WHERE g.role = 'puissance' AND g.enabled AND v.time > now() - interval '15 minutes' ORDER BY g.id, v.time DESC) x""")
+    by_day = end - start > timedelta(days=2)
+    serie, compteurs, total = energy_split.split(meters, samples, seeds, line_stops, start, end, step, workers.TZ, by_day)
+    tons = sum(r["tonnage_t"] or 0 for r in lignes)
+    return {"debut": start, "fin": end, "pas": "jour" if by_day else "heure", "serie": serie, "compteurs": compteurs,
+            "total": {**total, "tonnage_t": tons, "kwh_per_t": total["kwh"] / tons if tons else None},
+            "lignes": lignes, "puissance_kw": puissance}
 
 
 # ----------------------------------------------------------------------------- tendances (pour les courbes de l'application)

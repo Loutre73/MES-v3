@@ -4,6 +4,7 @@ import {
   api, useApi, Msg, Band, Tile, Pill, Frise, Bars, Ring, Info, Spark, Icon, ICON, Dialog, useToast, lineState, oeeKind,
   hm, num, pct, dur, dhms, dt, nowLabel, fmtDayShort,
 } from "./lib.js";
+import { Pareto, StackBars, Donut, topN } from "./charts.js";
 
 const PERIODS = [["poste", "Poste", 1], ["jour", "Jour", 1], ["semaine", "Semaine", 7], ["mois", "Mois", 31]];
 const KIND_COLOR = { good: "var(--green)", warn: "var(--orange)", bad: "var(--red)", idle: "var(--muted)" };
@@ -63,7 +64,9 @@ export function Synthese({ user }) {
   const pareto = useApi(period === "poste" ? `/arrets/pareto?jours=1` : `/arrets/pareto?${win}`, [period], 60000);
   const alarms = useApi("/alarmes?actives=true&jours=31", [], 10000);
   const motors = useApi("/moteurs", [], 60000);
-  const energy = useApi(open === "energie" ? (period === "poste" ? "/energie?jours=1" : `/energie?${win}`) : null, [open, period]);
+  const shiftStart = (board.data?.lignes || []).find(l => l.shift_id)?.starts_at;
+  const eWin = period === "poste" ? (shiftStart ? `depuis=${encodeURIComponent(shiftStart)}` : "jours=1") : win;
+  const energy = useApi(`/energie/analyse?${eWin}`, [period, shiftStart, range], 60000);
 
   const b = board.data;
   if (board.error && !b) return html`<${Msg} error=${board.error} />`;
@@ -149,7 +152,7 @@ export function Synthese({ user }) {
         <div class="lst scroll" style="flex:1">
           ${(alarms.data || []).slice(0, 4).map(a => html`<div>
             <${Pill} kind=${a.priority === "critique" || a.priority === "haute" ? "bad" : a.priority === "moyenne" ? "warn" : "idle"}>${a.priority}</${Pill}>
-            <span class="t" title=${a.message}>${a.machine ? a.machine + " · " : ""}${a.message}</span><span class="spacer"></span><span class="sub num">${hm(a.raised_at)}</span></div>`)}
+            <span class="t" title=${a.message}>${a.machine && !a.message.startsWith(a.machine) ? a.machine + " · " : ""}${a.message}</span><span class="spacer"></span><span class="sub num">${hm(a.raised_at)}</span></div>`)}
           ${alarms.data && !alarms.data.length && html`<p class="empty">Aucune alarme active.</p>`}
         </div>
       </${Tile}>
@@ -173,8 +176,9 @@ export function Synthese({ user }) {
       </${Tile}>
 
       <${Tile} id="energie" title="Énergie" col="span 3" ...${tiles}
-        detail=${html`<${EnergyDetail} lines=${lines} hourly=${hourly.data} energy=${energy.data} period=${p[1]} />`}>
+        detail=${html`<${EnergyDetail} lines=${lines} energy=${energy.data} />`}>
         <div style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:26px">${num(k.kwh_per_t, 1)}</span><span class="sub">kWh/t · ${num(k.energy_kwh, 0)} kWh</span></div>
+        <${EnergySplit} t=${energy.data?.total} />
         <div style="flex:1;min-height:0"><${Bars} data=${hourlyEnergy(hourly.data).slice(-12)} unit="kWh" color="var(--sky)" slots=${12} labelEvery=${3} /></div>
       </${Tile}>
 
@@ -310,12 +314,8 @@ function AlarmDetail({ alarms, onAck, onAckAll }) {
 }
 
 function ParetoDetail({ pareto }) {
-  const total = pareto.reduce((a, r) => a + r.minutes, 0);
-  const sum = html`<div style="display:flex;align-items:baseline;gap:8px;padding:4px 10px"><span class="sub">Total</span><span class="spacer"></span><b class="num">${dhms(total * 60)}</b></div>`;
-  return html`<div style="display:grid;grid-template-columns:2fr 1fr;gap:24px">
-    <div style="display:grid;gap:10px;align-content:start">${paretoBars(pareto, 20)}</div>
-    <div class="lst">${pareto.map(r => html`<div><span class="t">${r.cause}</span><span class="spacer"></span><span class="num sub">${total ? Math.round((r.minutes / total) * 100) : 0} %</span></div>`)}
-      ${sum}<a href="#/arrets" style="font-weight:600;background:none">Arrêts →</a></div></div>`;
+  return html`<div class="row" style="margin-bottom:8px"><span class="sub">non planifiés · jj:hh:mm:ss</span><span class="spacer"></span><a class="btn" href="#/arrets">Arrêts →</a></div>
+    <${Pareto} height=${340} fmt=${dhms} items=${pareto.map(r => ({ label: r.cause, v: r.minutes * 60, sub: `${r.nombre} arrêts`, color: r.category === "non_qualifie" ? "var(--orange)" : null }))} />`;
 }
 
 function MotorDetail({ motors }) {
@@ -328,15 +328,28 @@ function MotorDetail({ motors }) {
       <div class="sub num" style="font-size:12px">${num(m.mean_current)} A</div></a>`)}</div>`;
 }
 
-function EnergyDetail({ lines, hourly, energy, period }) {
-  const max = Math.max(1, ...lines.map(l => l.kwh_per_t || 0));
-  return html`<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
-    <div><h3 style="margin:0 0 10px;font-size:14px">kWh par heure · 24 h</h3><div style="height:200px"><${Bars} data=${hourlyEnergy(hourly)} unit="kWh" color="var(--sky)" labelEvery=${4} slots=${24} /></div>
-      <h3 style="margin:16px 0 10px;font-size:14px">kWh/t par ligne · poste</h3>
-      <div style="display:grid;gap:8px">${lines.map(l => html`<div class="hbar"><span>${l.name}</span><b class="num">${num(l.kwh_per_t, 1)}</b><div class="track"><div style=${{ width: ((l.kwh_per_t || 0) / max) * 100 + "%" }}></div></div></div>`)}</div></div>
-    <div><h3 style="margin:0 0 10px;font-size:14px">Compteurs · ${period.toLowerCase()}</h3>
-      ${energy ? html`<div class="lst">${(energy.par_compteur || []).slice(0, 12).map(c => html`<div><span class="t">${c.compteur}</span><span class="sub">${c.line || c.usage || ""}</span><span class="spacer"></span><b class="num">${num(c.kwh, 0)} kWh</b></div>`)}</div>
-        <p class="sub"><b>${num(energy.puissance_kw, 0)} kW</b> · <a href="#/energie">Énergie →</a></p>` : html`<p class="empty">Chargement…</p>`}</div></div>`;
+// part de l'énergie consommée en production et hors production
+function EnergySplit({ t, wide = false }) {
+  if (!t || !t.kwh) return html`<div class="split"></div>`;
+  const p = t.prod_kwh / t.kwh;
+  return html`<div style=${{ display: "flex", flexDirection: "column", gap: "4px", ...(wide ? { flex: 1, maxWidth: "460px" } : {}) }}>
+    <div class="split" role="img" aria-label=${`En production ${Math.round(p * 100)} %, hors production ${Math.round((1 - p) * 100)} %`}>
+      <div style=${{ width: p * 100 + "%", background: "var(--green)" }}></div><div style=${{ flex: 1, background: "var(--orange)" }}></div></div>
+    <div class="legend" style="font-size:12px;gap:10px"><span><i style="background:var(--green)"></i>Prod. ${Math.round(p * 100)} %</span>
+      <span><i style="background:var(--orange)"></i>Hors prod. ${num(t.hors_kwh, 0)} kWh</span></div></div>`;
+}
+
+function EnergyDetail({ lines, energy }) {
+  if (!energy) return html`<p class="empty">Chargement…</p>`;
+  const serie = energy.serie.map(r => ({ label: energy.pas === "jour" ? fmtDayShort.format(new Date(r.t)) : hm(r.t).slice(0, 2) + "h", parts: [r.prod_kwh, r.hors_kwh] }));
+  const by = {};
+  energy.compteurs.forEach(c => { by[c.line || "Commun"] = (by[c.line || "Commun"] || 0) + c.kwh; });
+  return html`<div class="row" style="margin-bottom:8px"><${EnergySplit} t=${energy.total} wide /><span class="spacer"></span><a class="btn" href="#/energie">Énergie →</a></div>
+    <div style="display:grid;grid-template-columns:3fr 2fr;gap:24px;flex:1;min-height:300px">
+      <div style="display:flex;flex-direction:column;min-height:0"><${StackBars} data=${serie} names=${["En production", "Hors production"]} colors=${["var(--green)", "var(--orange)"]} unit="kWh"
+        labelEvery=${serie.length > 16 ? Math.ceil(serie.length / 12) : 1} /></div>
+      <${Donut} items=${topN(Object.entries(by).map(([label, v]) => ({ label, v })), 6)} unit="kWh" center=${num(energy.total.kwh / 1000, 1)} centerSub="MWh" size=${160} />
+    </div>`;
 }
 
 function ShiftDetail({ lines }) {

@@ -401,3 +401,25 @@ svg.chart2 .unit { font-weight: 700; }
 .mstat > div { display: flex; flex-direction: column; }
 .mstat span { font-size: 12px; color: var(--text2); font-weight: 600; }
 .mstat b { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------ graphiques (charts.js) */
+:root, [data-theme="light"] { --c1: #2563C9; --c2: #E39A0B; --c3: #0E9F8A; --c4: #8B5CD6; --c5: #D9467A; --c6: #5FA8E8; }
+[data-theme="dark"] { --c1: #3B78DB; --c2: #D18E0A; --c3: #12A58F; --c4: #9469DC; --c5: #DD5585; --c6: #4F96D6; }
+.chart-tip.wide { width: 170px; align-items: stretch; z-index: 4; }
+.chart-tip .trow { display: flex; align-items: center; gap: 6px; }
+.chart-tip .trow i { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.chart-tip .trow b { margin-left: auto; font-size: 12px; }
+.donut { display: flex; align-items: center; gap: 16px; flex: 1; min-height: 0; min-width: 0; }
+.dleg { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; overflow: auto; max-height: 100%; }
+.dleg > div { display: grid; grid-template-columns: 10px minmax(48px, 1fr) auto 34px; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+.dleg > div.on { background: var(--fill); }
+.dleg i { width: 10px; height: 10px; border-radius: 3px; }
+.dleg .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dleg .sub { text-align: right; }
+.kcell .v.warn { color: var(--orange); }
+.split { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; background: var(--fill); }
+.split > div { height: 100%; }
+svg.chart2 .halo { paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; fill: var(--text); }
+.dleg b { white-space: nowrap; }
+@media (max-width: 1400px) { .donut svg { width: 130px !important; height: 130px !important; } }
+nav.side { padding-bottom: 60px; }   /* place du bouton « Mode tactile » */
