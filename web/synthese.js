@@ -123,9 +123,9 @@ export function Synthese({ user }) {
         <div style="flex:1;min-height:0"><${Bars} data=${hourlyProd(hourly.data).slice(-12)} unit="t" labelEvery=${3} slots=${12} /></div>
       </${Tile}>
 
-      <${Tile} id="trs" title="TRS" col="span 3" ...${tiles} detail=${html`<${TrsDetail} lines=${lines} week=${week.data || []} />`}>
+      <${Tile} id="trs" title=${tr("TRS")} col="span 3" ...${tiles} detail=${html`<${TrsDetail} lines=${lines} week=${week.data || []} />`}>
         <div style="display:flex;align-items:center;gap:14px;flex:1;min-height:0">
-          <${Ring} value=${k.oee} label="TRS" />
+          <${Ring} value=${k.oee} label=${tr("TRS")} />
           <div style="display:grid;gap:6px;flex:1;min-width:0">
             ${[[N_("Disponibilité"), k.availability], [N_("Performance"), k.performance], [N_("Qualité"), k.oee !== null ? 1 : null]].map(([l, v]) => html`<div class="hbar">
               <span>${tr(l)}</span><b class="num">${pct(v)}</b><div class="track"><div style=${{ width: (v || 0) * 100 + "%", background: KIND_COLOR[oeeKind(v)] }}></div></div></div>`)}
@@ -211,7 +211,7 @@ function LineCard({ l, stops, rate }) {
   const prog = l.target_t ? Math.min(1, (l.tonnage_t || 0) / l.target_t) : null;
   return html`<a href=${`#/ligne/${l.id}`} class="lcard" style="text-decoration:none;color:inherit;background:var(--fill2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-width:0;min-height:0;overflow:hidden">
     <div style="display:flex;align-items:center;gap:8px"><b style="font-size:16px">${l.name}</b><span class="spacer"></span><${Pill} kind=${st.kind}>${st.label}</${Pill}></div>
-    <div style="display:flex;align-items:baseline;gap:6px"><span class="num" style=${{ fontSize: "22px", fontWeight: 800, whiteSpace: "nowrap", color: KIND_COLOR[oeeKind(l.oee)] }}>${pct(l.oee)}</span><span class="sub">TRS</span>
+    <div style="display:flex;align-items:baseline;gap:6px"><span class="num" style=${{ fontSize: "22px", fontWeight: 800, whiteSpace: "nowrap", color: KIND_COLOR[oeeKind(l.oee)] }}>${pct(l.oee)}</span><span class="sub">${tr("TRS")}</span>
       <span class="spacer"></span><span class="sub num" style="white-space:nowrap">${num(l.tonnage_t, 0)}${prog !== null ? ` / ${num(l.target_t, 0)}` : ""} t</span>
       ${l.unqualified_count ? html`<span title=${tr("Arrêts à qualifier")}><${Pill} kind="warn">${l.unqualified_count}</${Pill}></span>` : ""}</div>
     ${l.starts_at && html`<${Frise} start=${l.starts_at} end=${l.ends_at} small stops=${stops.filter(s => T(s.ends_at || Date.now()) > T(l.starts_at) && T(s.starts_at) < T(l.ends_at))} />`}
@@ -286,7 +286,7 @@ function TrsDetail({ lines, week }) {
   const bars = Object.keys(days).sort().map(k => { const a = aggregate(days[k]); return { label: fmtDayShort.format(new Date(+k)), v: a.oee === null ? 0 : a.oee * 100, color: KIND_COLOR[oeeKind(a.oee)] }; });
   return html`<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
     <div><h3 style="margin:0 0 10px;font-size:14px">${tr("Par ligne · poste")}</h3>
-      <div class="table-wrap"><table><thead><tr><th>${tr("Ligne")}</th><th class="num">TRS</th><th class="num">${tr("Dispo")}</th><th class="num">${tr("Perf")}</th><th class="num">${tr("Arrêts")}</th></tr></thead>
+      <div class="table-wrap"><table><thead><tr><th>${tr("Ligne")}</th><th class="num">${tr("TRS")}</th><th class="num">${tr("Dispo")}</th><th class="num">${tr("Perf")}</th><th class="num">${tr("Arrêts")}</th></tr></thead>
       <tbody>${lines.map(l => html`<tr><td><a href=${`#/ligne/${l.id}`}>${l.name}</a></td><td class="num"><b style=${{ color: KIND_COLOR[oeeKind(l.oee)] }}>${pct(l.oee)}</b></td>
         <td class="num">${pct(l.availability)}</td><td class="num">${pct(l.performance)}</td><td class="num">${l.stop_count ?? "–"} · ${dur(l.unplanned_stop_s)}</td></tr>`)}</tbody></table></div></div>
     <div><h3 style="margin:0 0 10px;font-size:14px">${tr("Usine · 7 jours")} <span class="sub">${tr("(obj. 75 %)")}</span></h3><div style="height:220px"><${Bars} data=${bars} unit="%" labelEvery=${1} target=${75} /></div></div>
