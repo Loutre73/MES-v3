@@ -1,0 +1,476 @@
+{
+  "uid": "mes-performance-en",
+  "title": "Performance and OEE",
+  "tags": [
+    "en",
+    "mes-v3"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "editable": false,
+  "templating": {
+    "list": [
+      {
+        "name": "ligne",
+        "label": "Line",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "historian"
+        },
+        "multi": true,
+        "includeAll": true,
+        "query": "SELECT m.name FROM catalog.machine m JOIN catalog.machine_type t ON t.id = m.type_id WHERE t.code = 'ligne' AND m.enabled ORDER BY 1",
+        "refresh": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Average OEE",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT sum(k.oee * (k.duration_s - k.planned_stop_s)) / nullif(sum(k.duration_s - k.planned_stop_s), 0) AS trs FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now()"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Tonnage",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masst",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT sum(k.tonnage_t) AS t FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now()"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Target achievement",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT sum(k.tonnage_t) / nullif(sum(k.target_t), 0) AS r FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now()"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Unplanned stops",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT sum(k.unplanned_stop_s) AS s FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now()"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "OEE per shift",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT s.starts_at AS time, m.name AS metric, k.oee AS value FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now() ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Actual and target tonnage per day",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masst"
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "day",
+        "showValue": "never"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT date_trunc('day', s.starts_at)::date::text AS \"day\", sum(k.tonnage_t) AS \"actual\", sum(k.target_t) AS \"target\" FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now() GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Shifts",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT s.starts_at AS \"start\", m.name AS \"line\", s.team AS \"team\", k.target_t AS \"target\", k.tonnage_t AS \"actual\", k.availability AS \"availability\", k.performance AS \"performance\", k.oee AS \"OEE\", k.kwh_per_t AS \"kWh/t\", k.stop_count AS \"stops\", k.unqualified_count AS \"to qualify\" FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now() ORDER BY 1 DESC, 2"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Stop cause Pareto (dd:hh:mm:ss)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "historian"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "share"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": " "
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "hidden"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#82A1CD"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duration"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 130
+              },
+              {
+                "id": "custom.align",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "stops"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cause"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "historian"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT cause AS \"cause\", lpad((s / 86400)::text, 2, '0') || ':' || to_char(make_interval(secs => s % 86400), 'HH24:MI:SS') AS \"duration\", n AS \"stops\", s AS \"share\" FROM (SELECT coalesce(c.label, 'Unqualified') AS cause, round(sum(extract(epoch FROM coalesce(e.ends_at, now()) - e.starts_at)))::bigint AS s, count(*) AS n FROM mes.stop_event e JOIN catalog.machine m ON m.id = e.machine_id LEFT JOIN mes.stop_cause c ON c.id = e.cause_id WHERE NOT e.planned AND $__timeFilter(e.starts_at) AND m.name IN (${ligne:sqlstring}) GROUP BY 1) x ORDER BY s DESC LIMIT 15"
+        }
+      ]
+    }
+  ]
+}

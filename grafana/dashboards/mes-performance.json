@@ -316,7 +316,7 @@
      "format": "table",
      "rawQuery": true,
      "editorMode": "code",
-     "rawSql": "SELECT date_trunc('day', s.starts_at)::date::text AS jour, sum(k.tonnage_t) AS \"réalisé\", sum(k.target_t) AS objectif FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now() GROUP BY 1 ORDER BY 1"
+     "rawSql": "SELECT date_trunc('day', s.starts_at)::date::text AS \"jour\", sum(k.tonnage_t) AS \"réalisé\", sum(k.target_t) AS \"objectif\" FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now() GROUP BY 1 ORDER BY 1"
     }
    ]
   },
@@ -349,7 +349,7 @@
      "format": "table",
      "rawQuery": true,
      "editorMode": "code",
-     "rawSql": "SELECT s.starts_at AS \"début\", m.name AS ligne, s.team AS \"équipe\", k.target_t AS objectif, k.tonnage_t AS \"réalisé\", k.availability AS dispo, k.performance AS perf, k.oee AS trs, k.kwh_per_t AS \"kWh/t\", k.stop_count AS \"arrêts\", k.unqualified_count AS \"à qualifier\" FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now() ORDER BY 1 DESC, 2"
+     "rawSql": "SELECT s.starts_at AS \"début\", m.name AS \"ligne\", s.team AS \"équipe\", k.target_t AS \"objectif\", k.tonnage_t AS \"réalisé\", k.availability AS \"dispo\", k.performance AS \"perf\", k.oee AS \"TRS\", k.kwh_per_t AS \"kWh/t\", k.stop_count AS \"arrêts\", k.unqualified_count AS \"à qualifier\" FROM mes.shift_kpi k JOIN mes.shift s ON s.id = k.shift_id JOIN catalog.machine m ON m.id = s.line_id WHERE $__timeFilter(s.starts_at) AND m.name IN (${ligne:sqlstring}) AND s.starts_at < now() ORDER BY 1 DESC, 2"
     }
    ]
   },
@@ -467,7 +467,7 @@
      "format": "table",
      "rawQuery": true,
      "editorMode": "code",
-     "rawSql": "SELECT cause, lpad((s / 86400)::text, 2, '0') || ':' || to_char(make_interval(secs => s % 86400), 'HH24:MI:SS') AS \"durée\", n AS \"arrêts\", s AS part FROM (SELECT coalesce(c.label, 'Non qualifié') AS cause, round(sum(extract(epoch FROM coalesce(e.ends_at, now()) - e.starts_at)))::bigint AS s, count(*) AS n FROM mes.stop_event e JOIN catalog.machine m ON m.id = e.machine_id LEFT JOIN mes.stop_cause c ON c.id = e.cause_id WHERE NOT e.planned AND $__timeFilter(e.starts_at) AND m.name IN (${ligne:sqlstring}) GROUP BY 1) x ORDER BY s DESC LIMIT 15"
+     "rawSql": "SELECT cause AS \"cause\", lpad((s / 86400)::text, 2, '0') || ':' || to_char(make_interval(secs => s % 86400), 'HH24:MI:SS') AS \"durée\", n AS \"arrêts\", s AS \"part\" FROM (SELECT coalesce(c.label, 'Non qualifié') AS cause, round(sum(extract(epoch FROM coalesce(e.ends_at, now()) - e.starts_at)))::bigint AS s, count(*) AS n FROM mes.stop_event e JOIN catalog.machine m ON m.id = e.machine_id LEFT JOIN mes.stop_cause c ON c.id = e.cause_id WHERE NOT e.planned AND $__timeFilter(e.starts_at) AND m.name IN (${ligne:sqlstring}) GROUP BY 1) x ORDER BY s DESC LIMIT 15"
     }
    ]
   }

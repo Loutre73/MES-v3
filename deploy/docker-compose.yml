@@ -170,6 +170,7 @@ services:
       - grafana-data:/var/lib/grafana
       - ../grafana/provisioning:/etc/grafana/provisioning:ro
       - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ../grafana/dashboards-en:/var/lib/grafana/dashboards-en:ro
     # Pas de port publié : Grafana n'est joignable qu'à travers l'application (web).
     depends_on:
       migrate:

@@ -9,7 +9,7 @@ import os
 from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
-from . import auth, db, metrics, typedefs, workers
+from . import auth, db, grafana, metrics, typedefs, workers
 from .i18n import langue_valide
 from .config import settings
 from .routes_catalog import router as catalog_router
@@ -96,6 +96,7 @@ async def set_langue(body: Langue, user: auth.User = Depends(auth.current_user))
         raise HTTPException(400, "Langue inconnue")
     async with db.pool().acquire() as conn:
         await conn.execute("UPDATE mes.app_user SET langue = $2 WHERE username = $1", user.username, langue)
+    grafana.oublier(user.username)
     return {"langue": langue}
 
 
@@ -105,8 +106,11 @@ GRAFANA_ROLE = {"admin": "Admin", "maintenance": "Viewer", "chef_equipe": "Viewe
 @app.get("/api/session/proxy", include_in_schema=False)
 async def proxy_auth(response: Response, user: auth.User = Depends(auth.current_user)):
     """Contrôle d'accès de nginx pour Grafana (auth_request) : Grafana reçoit l'utilisateur MES connecté."""
+    role = GRAFANA_ROLE.get(user.role, "Viewer")
+    if not settings.auth_disabled:
+        await grafana.synchroniser(user.username, role)
     response.headers["X-Mes-User"] = user.username
-    response.headers["X-Mes-Role"] = GRAFANA_ROLE.get(user.role, "Viewer")
+    response.headers["X-Mes-Role"] = role
     return {"ok": True}
 
 
