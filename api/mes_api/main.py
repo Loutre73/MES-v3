@@ -107,8 +107,7 @@ GRAFANA_ROLE = {"admin": "Admin", "maintenance": "Viewer", "chef_equipe": "Viewe
 async def proxy_auth(response: Response, user: auth.User = Depends(auth.current_user)):
     """Contrôle d'accès de nginx pour Grafana (auth_request) : Grafana reçoit l'utilisateur MES connecté."""
     role = GRAFANA_ROLE.get(user.role, "Viewer")
-    if not settings.auth_disabled:
-        await grafana.synchroniser(user.username, role)
+    await grafana.synchroniser(user.username, role)   # aussi en accès libre (utilisateur « admin »)
     response.headers["X-Mes-User"] = user.username
     response.headers["X-Mes-Role"] = role
     return {"ok": True}
