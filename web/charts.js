@@ -1,7 +1,7 @@
 // Graphiques de l'application : barres empilées, anneau (camembert) et Pareto.
 // Dessinés à la taille réelle (textes non déformés), lisibles au doigt : un appui affiche la valeur.
 import { html, useState, useRef, useLayoutEffect } from "./vendor/preact-htm.module.js";
-import { num } from "./lib.js";
+import { num, tr, N_ } from "./lib.js";
 
 // couleurs des catégories (ordre fixe, contrôlé pour les daltonismes) ; la dernière couleur sert à « Autres »
 export const CAT = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)", "var(--c6)"];
@@ -27,11 +27,11 @@ function Tip({ x, w, children }) {
 }
 
 // Barres empilées : data [{ label, tip, parts: [v1, v2…] }], names / colors des parties
-export function StackBars({ data, names, colors, unit = "", height = null, labelEvery = 1, empty = "Pas de données sur la période." }) {
+export function StackBars({ data, names, colors, unit = "", height = null, labelEvery = 1, empty = N_("Pas de données sur la période.") }) {
   const [ref, size] = useSize();
   const [hi, setHi] = useState(null);
   const box = { position: "relative", width: "100%", minWidth: 0, ...(height ? { height: height + "px" } : { flex: 1, minHeight: "120px" }) };
-  if (!data.length || !data.some(d => d.parts.some(v => v > 0))) return html`<div ref=${ref} class="chart-box" style=${box}><p class="empty">${empty}</p></div>`;
+  if (!data.length || !data.some(d => d.parts.some(v => v > 0))) return html`<div ref=${ref} class="chart-box" style=${box}><p class="empty">${tr(empty)}</p></div>`;
   const W = size.w || 600, H = size.h || height || 200, P = { l: 46, r: 8, t: 10, b: 22 };
   const max = Math.max(1, ...data.map(d => d.parts.reduce((a, v) => a + (v || 0), 0)));
   const yt = ticks(max), top = yt[yt.length - 1];
@@ -61,16 +61,16 @@ export function StackBars({ data, names, colors, unit = "", height = null, label
 }
 
 // Anneau (camembert) : items [{ label, v, color }] ; la légende donne valeur et part
-export function Donut({ items, unit = "", center = null, centerSub = "", size = 180, empty = "Pas de données." }) {
+export function Donut({ items, unit = "", center = null, centerSub = "", size = 180, empty = N_("Pas de données.") }) {
   const [hi, setHi] = useState(null);
   const total = items.reduce((a, x) => a + (x.v || 0), 0);
-  if (!total) return html`<p class="empty">${empty}</p>`;
+  if (!total) return html`<p class="empty">${tr(empty)}</p>`;
   const r = 42, c = 2 * Math.PI * r;
   let acc = 0;
   const gap = items.length > 1 ? 0.6 : 0;
   const cur = hi !== null ? items[hi] : null;
   return html`<div class="donut">
-    <svg viewBox="0 0 100 100" style=${{ width: size + "px", height: size + "px", flex: "none" }} role="img" aria-label="Répartition">
+    <svg viewBox="0 0 100 100" style=${{ width: size + "px", height: size + "px", flex: "none" }} role="img" aria-label=${tr("Répartition")}>
       <circle cx="50" cy="50" r=${r} fill="none" style=${{ stroke: "var(--fill)" }} stroke-width="14" />
       ${items.map((x, i) => {
         const len = (x.v / total) * c, off = acc; acc += len;
@@ -87,7 +87,7 @@ export function Donut({ items, unit = "", center = null, centerSub = "", size = 
 }
 
 // Regroupe en N parts plus « Autres »
-export function topN(rows, n, label = "Autres") {
+export function topN(rows, n, label = tr("Autres")) {
   const s = rows.slice().sort((a, b) => b.v - a.v);
   // peu d'entités (lignes, usages) : couleur attachée à l'entité (ordre alphabétique), pas à son rang
   const names = rows.map(x => x.label).sort((a, b) => a.localeCompare(b, "fr", { numeric: true }));
@@ -98,13 +98,13 @@ export function topN(rows, n, label = "Autres") {
 }
 
 // Pareto : barres triées et cumul en % (points étiquetés, repère 80 %) ; une seule échelle verticale (les barres)
-export function Pareto({ items, unit = "", fmt = v => num(v, 0), height = null, max = 12, empty = "Aucune donnée sur la période." }) {
+export function Pareto({ items, unit = "", fmt = v => num(v, 0), height = null, max = 12, empty = N_("Aucune donnée sur la période.") }) {
   const [ref, size] = useSize();
   const [hi, setHi] = useState(null);
   const box = { position: "relative", width: "100%", minWidth: 0, ...(height ? { height: height + "px" } : { flex: 1, minHeight: "140px" }) };
   const all = items.filter(x => x.v > 0).sort((a, b) => b.v - a.v);
-  if (!all.length) return html`<div ref=${ref} class="chart-box" style=${box}><p class="empty">${empty}</p></div>`;
-  const rows = all.length > max ? [...all.slice(0, max - 1), { label: `Autres (${all.length - max + 1})`, v: all.slice(max - 1).reduce((a, x) => a + x.v, 0), other: true }] : all;
+  if (!all.length) return html`<div ref=${ref} class="chart-box" style=${box}><p class="empty">${tr(empty)}</p></div>`;
+  const rows = all.length > max ? [...all.slice(0, max - 1), { label: `${tr("Autres")} (${all.length - max + 1})`, v: all.slice(max - 1).reduce((a, x) => a + x.v, 0), other: true }] : all;
   const total = rows.reduce((a, x) => a + x.v, 0);
   let cum = 0;
   const pts = rows.map(x => (cum += x.v) / total);
@@ -120,7 +120,7 @@ export function Pareto({ items, unit = "", fmt = v => num(v, 0), height = null, 
   const pick = e => { const r = ref.current.getBoundingClientRect(); const i = Math.floor((e.clientX - r.left - P.l) / bw); setHi(i >= 0 && i < rows.length ? i : null); };
   const d = hi !== null && rows[hi];
   return html`<div ref=${ref} class="chart-box" style=${box} onPointerMove=${pick} onPointerDown=${pick} onPointerLeave=${() => setHi(null)}>
-    <svg class="chart2" width=${W} height=${H} role="img" aria-label="Pareto">
+    <svg class="chart2" width=${W} height=${H} role="img" aria-label=${tr("Pareto")}>
       ${rows.map((x, i) => html`<rect x=${P.l + i * bw + gap / 2} y=${Y(x.v)} width=${Math.max(1, bw - gap)} height=${Math.max(0, Y(0) - Y(x.v))} rx=${Math.min(4, (bw - gap) / 2)}
         style=${{ fill: x.other ? OTHER : x.color || (i80 >= 0 && i <= i80 ? "var(--primary)" : "var(--sky)") }} opacity=${hi === null || hi === i ? 1 : 0.5} />`)}
       <line x1=${P.l} x2=${W - P.r} y1=${Yc(0.8)} y2=${Yc(0.8)} style=${{ stroke: "var(--text2)" }} stroke-dasharray="4 4" />
@@ -132,16 +132,16 @@ export function Pareto({ items, unit = "", fmt = v => num(v, 0), height = null, 
         ${bw > 44 ? html`<text x=${cx(i)} y=${H - P.b + 30} text-anchor="middle" style=${{ fill: "var(--text)", fontWeight: 700 }}>${fmt(x.v)}</text>` : null}`)}
     </svg>
     ${d && html`<${Tip} x=${cx(hi)} w=${W}><b>${d.label}</b><span class="num">${fmt(d.v)} ${unit} · ${Math.round((d.v / total) * 100)} %</span>
-      ${d.sub ? html`<span>${d.sub}</span>` : null}<span class="num">Cumul ${Math.round(pts[hi] * 100)} %</span></${Tip}>`}
+      ${d.sub ? html`<span>${d.sub}</span>` : null}<span class="num">${tr("Cumul")} ${Math.round(pts[hi] * 100)} %</span></${Tip}>`}
   </div>`;
 }
 
 // Colonnes avec axe, valeur au-dessus de chaque colonne et ligne d'objectif : data [{ label, v, color, tip }]
-export function Columns({ data, unit = "", fmt = v => num(v, 0), max = null, target = null, targetLabel = "", height = null, labelEvery = 1, empty = "Pas de données sur la période." }) {
+export function Columns({ data, unit = "", fmt = v => num(v, 0), max = null, target = null, targetLabel = "", height = null, labelEvery = 1, empty = N_("Pas de données sur la période.") }) {
   const [ref, size] = useSize();
   const [hi, setHi] = useState(null);
   const box = { position: "relative", width: "100%", minWidth: 0, ...(height ? { height: height + "px" } : { flex: 1, minHeight: "120px" }) };
-  if (!data.length) return html`<div ref=${ref} class="chart-box" style=${box}><p class="empty">${empty}</p></div>`;
+  if (!data.length) return html`<div ref=${ref} class="chart-box" style=${box}><p class="empty">${tr(empty)}</p></div>`;
   const W = size.w || 600, H = size.h || height || 200, P = { l: 40, r: 8, t: 18, b: 22 };
   const yt = ticks(max ?? Math.max(1, target || 0, ...data.map(d => d.v || 0))), top = max ?? yt[yt.length - 1];
   const Y = v => P.t + (1 - Math.min(v, top) / top) * (H - P.t - P.b);

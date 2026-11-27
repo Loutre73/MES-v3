@@ -3,17 +3,20 @@
 // Les arrêts planifiés (arrêt ou maintenance) sont des plages à l'intérieur du poste. Une semaine se copie ou se vide
 // d'un coup, et la copie automatique reprend la semaine en cours dans une semaine suivante restée vide.
 import { html, useState, useEffect, useRef } from "./vendor/preact-htm.module.js";
-import { api, useApi, Msg, Band, Dialog, useToast, can, hm } from "./lib.js";
+import { api, useApi, Msg, Band, Dialog, useToast, can, hm, tr, N_, fmt } from "./lib.js";
 
 const DAY_MS = 86400e3, MIN = 60e3, DAY_START_H = 6;
 const T = v => new Date(v).getTime();
 const TEAMS = ["A", "B", "C", "D"];
-const DAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
+// noms des jours (0 = lundi) dans la langue courante
+const fWeekday = fmt({ weekday: "long" });
+const dayName = i => fWeekday.format(new Date(2024, 0, 1 + i));
 const RECIPE_COLORS = [["#2F5D8A", "#FFFFFF"], ["#7FD3E3", "#062C33"], ["#82A1CD", "#000B44"], ["#4A6A8C", "#FFFFFF"], ["#B7C9E2", "#000B44"], ["#1B2F41", "#FFFFFF"]];
-const STOP_LABEL = { arret: "Arrêt", maintenance: "Maintenance" };
-const fDay = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric" });
-const fDayLong = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "short" });
-const fWeek = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short" });
+const STOP_FR = { arret: N_("Arrêt"), maintenance: N_("Maintenance") };
+const STOP_LABEL = new Proxy(STOP_FR, { get: (o, k) => (o[k] ? tr(o[k]) : undefined) });
+const fDay = fmt({ weekday: "short", day: "numeric" });
+const fDayLong = fmt({ weekday: "long", day: "numeric", month: "short" });
+const fWeek = fmt({ day: "numeric", month: "short" });
 const SHOWN_KEY = "mes-planning-lignes";
 
 function weekStart(offset) {
@@ -70,7 +73,7 @@ export function Planning({ user }) {
 
   const toggleLine = id => {
     const h = hidden.includes(id) ? hidden.filter(x => x !== id) : [...hidden, id];
-    if (h.length >= lines.length) return showToast("Au moins une ligne doit rester affichée.", true);
+    if (h.length >= lines.length) return showToast(tr("Au moins une ligne doit rester affichée."), true);
     setHidden(h); try { localStorage.setItem(SHOWN_KEY, JSON.stringify(h)); } catch (e) { /* stockage indisponible */ }
   };
   const showAll = () => { setHidden([]); try { localStorage.removeItem(SHOWN_KEY); } catch (e) { /* stockage indisponible */ } };
@@ -82,9 +85,9 @@ export function Planning({ user }) {
     if (s.getTime() <= now) s = new Date(Math.ceil(now / 3600e3) * 3600e3);
     const dayEnd = addDays(day, 1).getTime();
     const after = list.filter(x => x.line_id === line.id && T(x.ends_at) > s.getTime()).sort((a, b) => T(a.starts_at) - T(b.starts_at))[0];
-    if (after && T(after.starts_at) <= s.getTime()) return showToast("Ce créneau est déjà occupé.", true);
+    if (after && T(after.starts_at) <= s.getTime()) return showToast(tr("Ce créneau est déjà occupé."), true);
     const e = Math.min(s.getTime() + 8 * 3600e3, dayEnd, after ? T(after.starts_at) : Infinity);
-    if (e - s.getTime() < 15 * MIN) return showToast("Ce créneau est déjà commencé ou occupé.", true);
+    if (e - s.getTime() < 15 * MIN) return showToast(tr("Ce créneau est déjà commencé ou occupé."), true);
     setDlg({ type: "form", shift: null, preset: { line_ids: [line.id], day, starts_at: s, ends_at: new Date(e) } });
   };
 
@@ -92,27 +95,27 @@ export function Planning({ user }) {
   // clic hors du menu : le ferme. Un bouton que son propre clic a retiré de la page (« Supprimer » remplacé
   // par la confirmation, rendu avant la fin de la propagation) n'est pas un clic hors du menu.
   return html`<div class="view" onClick=${e => { if (sel && e.target.isConnected && !e.target.closest(".pl-pop, .pl-bar")) setSel(null); }}>
-    <${Band} over=${`${fWeek.format(start)} – ${fWeek.format(end)}`} title="Planning">
-      <div class="seg" role="group" aria-label="Semaine">
-        <button type="button" onClick=${() => { setOffset(offset - 1); setSel(null); }} aria-label="Semaine précédente">‹</button>
-        <button type="button" class=${offset === 0 ? "on" : ""} onClick=${() => { setOffset(0); setSel(null); }}>Cette semaine</button>
-        <button type="button" onClick=${() => { setOffset(offset + 1); setSel(null); }} aria-label="Semaine suivante">›</button>
+    <${Band} over=${`${fWeek.format(start)} – ${fWeek.format(end)}`} title=${tr("Planning")}>
+      <div class="seg" role="group" aria-label=${tr("Semaine")}>
+        <button type="button" onClick=${() => { setOffset(offset - 1); setSel(null); }} aria-label=${tr("Semaine précédente")}>‹</button>
+        <button type="button" class=${offset === 0 ? "on" : ""} onClick=${() => { setOffset(0); setSel(null); }}>${tr("Cette semaine")}</button>
+        <button type="button" onClick=${() => { setOffset(offset + 1); setSel(null); }} aria-label=${tr("Semaine suivante")}>›</button>
       </div>
       ${edit && html`
-        <button type="button" class="pl-ghost" disabled=${!list.length} onClick=${() => setDlg({ type: "copy" })}>⧉ Copier</button>
-        <button type="button" class="pl-ghost" disabled=${!list.some(s => T(s.starts_at) > now)} onClick=${() => setDlg({ type: "clear" })}>🗑 Vider</button>
-        <button type="button" class=${"pl-ghost" + (cfg && cfg.active ? " on" : "")} onClick=${() => setDlg({ type: "auto" })} title="Copie automatique d'une semaine vide">
-          ↻ ${cfg ? (cfg.active ? `Auto ${DAYS[cfg.jour].slice(0, 3)}. ${cfg.heure} h` : "Auto off") : "Auto"}</button>
-        <button type="button" class="pl-plus" aria-label="Créer un poste" title="Créer un poste"
+        <button type="button" class="pl-ghost" disabled=${!list.length} onClick=${() => setDlg({ type: "copy" })}>${tr("⧉ Copier")}</button>
+        <button type="button" class="pl-ghost" disabled=${!list.some(s => T(s.starts_at) > now)} onClick=${() => setDlg({ type: "clear" })}>${tr("🗑 Vider")}</button>
+        <button type="button" class=${"pl-ghost" + (cfg && cfg.active ? " on" : "")} onClick=${() => setDlg({ type: "auto" })} title=${tr("Copie automatique d'une semaine vide")}>
+          ↻ ${cfg ? (cfg.active ? `${tr("Auto")} ${dayName(cfg.jour).slice(0, 3)}. ${cfg.heure} h` : tr("Auto off")) : tr("Auto")}</button>
+        <button type="button" class="pl-plus" aria-label=${tr("Créer un poste")} title=${tr("Créer un poste")}
           onClick=${() => setDlg({ type: "form", shift: null, preset: { day: days[Math.max(0, todayIdx)] } })}>+</button>`}
     </${Band}>
     <${Msg} error=${shifts.error} />
-    <section class="tile pl-board" aria-label="Planning de la semaine">
-      <div class="pl-filter" role="group" aria-label="Lignes affichées">
+    <section class="tile pl-board" aria-label=${tr("Planning de la semaine")}>
+      <div class="pl-filter" role="group" aria-label=${tr("Lignes affichées")}>
         ${lines.map(l => html`<button type="button" class=${"chip pl-sm" + (hidden.includes(l.id) ? " off" : " on")} aria-pressed=${!hidden.includes(l.id)} onClick=${() => toggleLine(l.id)}>${l.name}</button>`)}
-        <button type="button" class="chip pl-sm" disabled=${!hidden.length} onClick=${showAll}>Toutes</button>
+        <button type="button" class="chip pl-sm" disabled=${!hidden.length} onClick=${showAll}>${tr("Toutes")}</button>
         <span class="spacer"></span>
-        <span class="legend" style="font-size:12px"><span><i class="pl-st maintenance"></i>Maintenance</span><span><i class="pl-st arret"></i>Arrêt</span></span>
+        <span class="legend" style="font-size:12px"><span><i class="pl-st maintenance"></i>${tr("Maintenance")}</span><span><i class="pl-st arret"></i>${tr("Arrêt")}</span></span>
       </div>
       <div class="pl-cols pl-head"><span></span><span></span>
         <div class="pl-hours num">${[...Array(13)].map((_, i) => html`<span style=${{ left: (i / 12) * 100 + "%" }}>${(DAY_START_H + 2 * i) % 24} h</span>`)}</div>
@@ -123,7 +126,7 @@ export function Planning({ user }) {
           const today = di === todayIdx && nowIn;
           const rows = `repeat(${Math.max(1, vis.length)}, minmax(0, 1fr))`;
           return html`<div class=${"pl-day pl-cols" + (today ? " today" : "")}>
-            <div class="pl-dname"><b>${fDay.format(d)}</b>${today && html`<small>Aujourd'hui</small>`}</div>
+            <div class="pl-dname"><b>${fDay.format(d)}</b>${today && html`<small>${tr("Aujourd'hui")}</small>`}</div>
             <div class="pl-lnames" style=${{ gridTemplateRows: rows }}>${vis.map(l => html`<span>${l.name}</span>`)}</div>
             <div class="pl-tracks" style=${{ gridTemplateRows: rows }}>
               ${vis.map(l => html`<div class="pl-track" onClick=${e => { if (e.target !== e.currentTarget || sel) return; const r = e.currentTarget.getBoundingClientRect(); createAt(d, l, (e.clientX - r.left) / r.width); }}>
@@ -137,20 +140,20 @@ export function Planning({ user }) {
         })}
       </div>
       ${!list.length && !shifts.loading && html`<div class="pl-empty"><div>
-        <h3>Semaine vide</h3>
-        ${autoAt && autoAt.getTime() > now && html`<p>↻ Copie auto ${fDayLong.format(autoAt)}, ${cfg.heure} h</p>`}
+        <h3>${tr("Semaine vide")}</h3>
+        ${autoAt && autoAt.getTime() > now && html`<p>${tr("↻ Copie auto")} ${fDayLong.format(autoAt)}, ${cfg.heure} h</p>`}
         ${edit && html`<div class="row" style="justify-content:center">
           <button type="button" class="primary" onClick=${async () => {
-            try { const r = await api("/planning/copier-semaine", { method: "POST", body: { source: isoDate(addDays(start, -7)), destination: isoDate(start) } }); showToast(`${r.cree} postes copiés.`); reload(); }
+            try { const r = await api("/planning/copier-semaine", { method: "POST", body: { source: isoDate(addDays(start, -7)), destination: isoDate(start) } }); showToast(tr("{n} postes copiés.", { n: r.cree })); reload(); }
             catch (e) { showToast(e.message, true); }
-          }}>⧉ Copier la semaine précédente</button>
-          <button type="button" onClick=${() => setDlg({ type: "form", shift: null, preset: { day: start } })}>+ Poste</button></div>`}
+          }}>${tr("⧉ Copier la semaine précédente")}</button>
+          <button type="button" onClick=${() => setDlg({ type: "form", shift: null, preset: { day: start } })}>${tr("+ Poste")}</button></div>`}
       </div></div>`}
     </section>
     ${selShift && html`<${ShiftMenu} s=${selShift} rect=${sel.rect} edit=${edit} now=${now} colorOf=${colorOf}
       onEdit=${() => { setDlg({ type: "form", shift: selShift }); setSel(null); }}
       onDup=${() => { setDlg({ type: "dup", shift: selShift }); setSel(null); }}
-      onDelete=${async () => { try { await api(`/shifts/${selShift.id}`, { method: "DELETE" }); showToast("Poste supprimé."); setSel(null); reload(); } catch (e) { showToast(e.message, true); } }} />`}
+      onDelete=${async () => { try { await api(`/shifts/${selShift.id}`, { method: "DELETE" }); showToast(tr("Poste supprimé.")); setSel(null); reload(); } catch (e) { showToast(e.message, true); } }} />`}
     ${dlg && dlg.type === "form" && html`<${ShiftForm} shift=${dlg.shift} preset=${dlg.preset} lines=${lines} recipes=${recipeList} colorOf=${colorOf} days=${days} now=${now}
       onClose=${() => setDlg(null)} onDone=${t => { setDlg(null); showToast(t); reload(); }} />`}
     ${dlg && dlg.type === "dup" && html`<${DupDialog} s=${dlg.shift} lines=${lines} list=${list} start=${start} now=${now}
@@ -170,9 +173,9 @@ function Bar({ s, d, colorOf, sel, past, onPick }) {
   const stops = s.stops || [];
   const full = stops.find(x => T(x.starts_at) <= a && T(x.ends_at) >= b);
   const [bg, fg] = s.recipe_id ? colorOf(s.recipe_id) : ["var(--soft)", "var(--text)"];
-  const label = full ? (full.type === "maintenance" ? "Maintenance" : "Arrêt planifié") : s.recipe_code || "Production";
-  const title = `${s.line} · ${hLabel(a)}–${hLabel(b)}${s.team ? " · équipe " + s.team : ""} · ${label}${s.target_t && !full ? " · " + Math.round(s.target_t) + " t" : ""}`
-    + (stops.length && !full ? " · arrêts : " + stops.map(x => `${hLabel(x.starts_at)}–${hLabel(x.ends_at)}`).join(", ") : "");
+  const label = full ? (full.type === "maintenance" ? tr("Maintenance") : tr("Arrêt planifié")) : s.recipe_code || tr("Production");
+  const title = `${s.line} · ${hLabel(a)}–${hLabel(b)}${s.team ? " · " + tr("équipe") + " " + s.team : ""} · ${label}${s.target_t && !full ? " · " + Math.round(s.target_t) + " t" : ""}`
+    + (stops.length && !full ? " · " + tr("arrêts :") + " " + stops.map(x => `${hLabel(x.starts_at)}–${hLabel(x.ends_at)}`).join(", ") : "");
   return html`<button type="button" class=${"pl-bar" + (full ? " pl-st " + full.type : "") + (past ? " past" : "") + (sel ? " sel" : "")}
       style=${{ left: `calc(${left}% + 1px)`, width: `calc(${width}% - 2px)`, ...(full ? {} : { background: bg, color: fg }) }}
       title=${title} aria-label=${title} aria-expanded=${sel} onClick=${onPick}>
@@ -195,22 +198,22 @@ function ShiftMenu({ s, rect, edit, now, colorOf, onEdit, onDup, onDelete }) {
   }, [s.id, confirm]);
   const started = T(s.starts_at) <= now, ended = T(s.ends_at) <= now;
   const [bg, fg] = s.recipe_id ? colorOf(s.recipe_id) : ["var(--fill)", "var(--text)"];
-  return html`<div class="pl-pop" ref=${ref} style=${pos} role="dialog" aria-label="Poste">
+  return html`<div class="pl-pop" ref=${ref} style=${pos} role="dialog" aria-label=${tr("Poste")}>
     <div><h4>${s.line} · ${hLabel(s.starts_at)} → ${hLabel(s.ends_at)}</h4>
       <div class="sub" style="text-transform:capitalize">${fDayLong.format(new Date(s.starts_at))}</div>
       <div class="row" style="gap:6px;margin-top:6px">
-        <span class="badge" style=${{ background: bg, color: fg }}>${s.recipe_code || "Sans recette"}${s.target_t ? ` · ${Math.round(s.target_t)} t` : ""}</span>
-        <span class="sub">${s.team ? "équipe " + s.team : "sans équipe"}</span></div>
+        <span class="badge" style=${{ background: bg, color: fg }}>${s.recipe_code || tr("Sans recette")}${s.target_t ? ` · ${Math.round(s.target_t)} t` : ""}</span>
+        <span class="sub">${s.team ? tr("équipe") + " " + s.team : tr("sans équipe")}</span></div>
       ${(s.stops || []).map(x => html`<div class="sub" style="margin-top:4px"><i class=${"pl-st pl-chip " + x.type}></i>${STOP_LABEL[x.type]} ${hLabel(x.starts_at)}–${hLabel(x.ends_at)}${x.reason ? " · " + x.reason : ""}</div>`)}
     </div>
-    ${(ended || started) && html`<span class=${"badge " + (ended ? "idle" : "warn")}>${ended ? "Terminé" : "En cours"}</span>`}
+    ${(ended || started) && html`<span class=${"badge " + (ended ? "idle" : "warn")}>${ended ? tr("Terminé") : tr("En cours")}</span>`}
     ${edit && (confirm
-      ? html`<b>Supprimer ce poste ?</b><div class="row" style="gap:6px"><button type="button" style="flex:1" onClick=${() => setConfirm(false)}>Annuler</button>
-          <button type="button" class="danger" style="flex:1" onClick=${onDelete}>Supprimer</button></div>`
+      ? html`<b>${tr("Supprimer ce poste ?")}</b><div class="row" style="gap:6px"><button type="button" style="flex:1" onClick=${() => setConfirm(false)}>${tr("Annuler")}</button>
+          <button type="button" class="danger" style="flex:1" onClick=${onDelete}>${tr("Supprimer")}</button></div>`
       : html`<div class="pl-acts">
-          <button type="button" onClick=${onEdit}>✎ Modifier</button>
-          <button type="button" onClick=${onDup}>⧉ Dupliquer…</button>
-          <button type="button" class="danger" disabled=${started} onClick=${() => setConfirm(true)}>🗑 Supprimer</button></div>`)}
+          <button type="button" onClick=${onEdit}>${tr("✎ Modifier")}</button>
+          <button type="button" onClick=${onDup}>${tr("⧉ Dupliquer…")}</button>
+          <button type="button" class="danger" disabled=${started} onClick=${() => setConfirm(true)}>${tr("🗑 Supprimer")}</button></div>`)}
   </div>`;
 }
 
@@ -240,8 +243,8 @@ function ShiftForm({ shift, preset = {}, lines, recipes, colorOf, days, now, onC
   }, 0)) / 3600e3 : null;
   const setStop = (i, p) => set({ stops: f.stops.map((x, j) => (j === i ? { ...x, ...p } : x)) });
   const save = async () => {
-    if (!sAt || !eAt || eAt <= sAt) return setErr("La fin du poste doit suivre son début.");
-    if (!f.line_ids.length) return setErr("Choisissez au moins une ligne.");
+    if (!sAt || !eAt || eAt <= sAt) return setErr(tr("La fin du poste doit suivre son début."));
+    if (!f.line_ids.length) return setErr(tr("Choisissez au moins une ligne."));
     const body = {
       starts_at: sAt.toISOString(), ends_at: eAt.toISOString(), team: f.team, recipe_id: f.recipe_id,
       target_t: f.target_t === "" || f.target_t === null ? null : +f.target_t, comment: shift ? shift.comment : null,
@@ -249,53 +252,53 @@ function ShiftForm({ shift, preset = {}, lines, recipes, colorOf, days, now, onC
     };
     setBusy(true);
     try {
-      if (shift) { await api(`/shifts/${shift.id}`, { method: "PUT", body: { ...body, line_id: f.line_ids[0] } }); onDone("Poste enregistré."); }
-      else { const r = await api("/shifts", { method: "POST", body: { ...body, line_ids: f.line_ids } }); onDone(r.ids.length > 1 ? `${r.ids.length} postes créés.` : "Poste créé."); }
+      if (shift) { await api(`/shifts/${shift.id}`, { method: "PUT", body: { ...body, line_id: f.line_ids[0] } }); onDone(tr("Poste enregistré.")); }
+      else { const r = await api("/shifts", { method: "POST", body: { ...body, line_ids: f.line_ids } }); onDone(r.ids.length > 1 ? tr("{n} postes créés.", { n: r.ids.length }) : tr("Poste créé.")); }
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
   const lock = !!started;
-  return html`<${Dialog} title=${shift ? "Modifier le poste" : "Nouveau poste"} onClose=${onClose}>
+  return html`<${Dialog} title=${shift ? tr("Modifier le poste") : tr("Nouveau poste")} onClose=${onClose}>
     <div class="pl-form">
-      <div class="f"><span class="lbl">${shift ? "Ligne" : "Lignes"}</span><div class="chips">
+      <div class="f"><span class="lbl">${shift ? tr("Ligne") : tr("Lignes")}</span><div class="chips">
         ${lines.map(l => html`<button type="button" class=${"chip" + (f.line_ids.includes(l.id) ? " on" : "")} disabled=${lock}
           onClick=${() => set({ line_ids: shift ? [l.id] : f.line_ids.includes(l.id) ? (f.line_ids.length > 1 ? f.line_ids.filter(x => x !== l.id) : f.line_ids) : [...f.line_ids, l.id] })}>${l.name}</button>`)}
-        ${!shift && html`<button type="button" class="chip" onClick=${() => set({ line_ids: lines.map(l => l.id) })}>Toutes</button>`}</div></div>
-      <div class="f"><span class="lbl">Jour</span><div class="chips">
+        ${!shift && html`<button type="button" class="chip" onClick=${() => set({ line_ids: lines.map(l => l.id) })}>${tr("Toutes")}</button>`}</div></div>
+      <div class="f"><span class="lbl">${tr("Jour")}</span><div class="chips">
         ${days.map(d => html`<button type="button" class=${"chip" + (d.getTime() === f.day.getTime() ? " on" : "")} style="text-transform:capitalize"
           disabled=${lock || addDays(d, 1).getTime() <= now} onClick=${() => set({ day: d })}>${fDay.format(d)}</button>`)}</div></div>
       <div class="pl-2">
-        <label class="f">Début<input type="time" step="900" value=${f.start} disabled=${lock} onInput=${e => set({ start: e.target.value })} /></label>
-        <label class="f">Fin<input type="time" step="900" value=${f.end} disabled=${lock} onInput=${e => set({ end: e.target.value })} /></label></div>
+        <label class="f">${tr("Début")}<input type="time" step="900" value=${f.start} disabled=${lock} onInput=${e => set({ start: e.target.value })} /></label>
+        <label class="f">${tr("Fin")}<input type="time" step="900" value=${f.end} disabled=${lock} onInput=${e => set({ end: e.target.value })} /></label></div>
       <div class="pl-enc">
-        <div class="f"><span class="lbl">Recette</span><div class="chips">
+        <div class="f"><span class="lbl">${tr("Recette")}</span><div class="chips">
           ${recipes.map(r => { const [bg, fg] = colorOf(r.id); return html`<button type="button" class=${"chip" + (f.recipe_id === r.id ? " pl-on" : "")} disabled=${lock} title=${r.label}
             style=${{ background: bg, color: fg, borderColor: bg }} onClick=${() => set({ recipe_id: r.id })}>${r.code}</button>`; })}
-          ${!recipes.length && html`<span class="sub">Aucune recette validée.</span>`}</div></div>
-        <label class="f" style="max-width:160px">Objectif (t)<input type="number" min="0" step="10" value=${f.target_t} onInput=${e => set({ target_t: e.target.value })} /></label>
+          ${!recipes.length && html`<span class="sub">${tr("Aucune recette validée.")}</span>`}</div></div>
+        <label class="f" style="max-width:160px">${tr("Objectif (t)")}<input type="number" min="0" step="10" value=${f.target_t} onInput=${e => set({ target_t: e.target.value })} /></label>
         <div class="pl-stops">
-          <span class="lbl">Arrêts planifiés${prodH !== null && f.stops.length ? html` <span class="sub">· production ${Math.round(prodH * 10) / 10} h</span>` : ""}</span>
+          <span class="lbl">${tr("Arrêts planifiés")}${prodH !== null && f.stops.length ? html` <span class="sub">· ${tr("production")} ${Math.round(prodH * 10) / 10} h</span>` : ""}</span>
           ${f.stops.map((x, i) => html`<div class="pl-srow">
-            <select value=${x.type} disabled=${lock} onChange=${e => setStop(i, { type: e.target.value })} aria-label="Type d'arrêt"><option value="arret">Arrêt</option><option value="maintenance">Maintenance</option></select>
-            <input type="time" step="900" value=${x.start} disabled=${lock} aria-label="Début de l'arrêt" onInput=${e => setStop(i, { start: e.target.value })} />
-            <input type="time" step="900" value=${x.end} disabled=${lock} aria-label="Fin de l'arrêt" onInput=${e => setStop(i, { end: e.target.value })} />
-            <input type="text" value=${x.reason} disabled=${lock} placeholder="Motif" aria-label="Motif de l'arrêt" onInput=${e => setStop(i, { reason: e.target.value })} />
-            <button type="button" class="xb" disabled=${lock} aria-label="Retirer l'arrêt" onClick=${() => set({ stops: f.stops.filter((_, j) => j !== i) })}>✕</button></div>`)}
+            <select value=${x.type} disabled=${lock} onChange=${e => setStop(i, { type: e.target.value })} aria-label=${tr("Type d'arrêt")}><option value="arret">${tr("Arrêt")}</option><option value="maintenance">${tr("Maintenance")}</option></select>
+            <input type="time" step="900" value=${x.start} disabled=${lock} aria-label=${tr("Début de l'arrêt")} onInput=${e => setStop(i, { start: e.target.value })} />
+            <input type="time" step="900" value=${x.end} disabled=${lock} aria-label=${tr("Fin de l'arrêt")} onInput=${e => setStop(i, { end: e.target.value })} />
+            <input type="text" value=${x.reason} disabled=${lock} placeholder=${tr("Motif")} aria-label=${tr("Motif de l'arrêt")} onInput=${e => setStop(i, { reason: e.target.value })} />
+            <button type="button" class="xb" disabled=${lock} aria-label=${tr("Retirer l'arrêt")} onClick=${() => set({ stops: f.stops.filter((_, j) => j !== i) })}>✕</button></div>`)}
           ${!lock && html`<div class="chips">
             <button type="button" class="chip" onClick=${() => {
               const last = f.stops.length ? f.stops[f.stops.length - 1].end : null;
               const a = last || (sAt && eAt ? toTime(new Date(sAt.getTime() + Math.floor((eAt - sAt) / 7200e3) * 3600e3)) : f.start);
               const b = atTime(f.day, a) ? toTime(new Date(Math.min(atTime(f.day, a).getTime() + 3600e3, eAt ? eAt.getTime() : Infinity))) : a;
               set({ stops: [...f.stops, { type: "arret", start: a, end: b, reason: "" }] });
-            }}>+ Arrêt</button>
-            <button type="button" class="chip" onClick=${() => set({ stops: [{ type: "arret", start: f.start, end: f.end, reason: "" }] })}>Tout le poste</button></div>`}
+            }}>${tr("+ Arrêt")}</button>
+            <button type="button" class="chip" onClick=${() => set({ stops: [{ type: "arret", start: f.start, end: f.end, reason: "" }] })}>${tr("Tout le poste")}</button></div>`}
         </div>
       </div>
-      <div class="f"><span class="lbl">Équipe</span><div class="chips">
+      <div class="f"><span class="lbl">${tr("Équipe")}</span><div class="chips">
         ${TEAMS.map(t => html`<button type="button" class=${"chip" + (f.team === t ? " on" : "")} onClick=${() => set({ team: t })}>${t}</button>`)}
-        <button type="button" class=${"chip" + (!f.team ? " on" : "")} onClick=${() => set({ team: null })}>Aucune</button></div></div>
+        <button type="button" class=${"chip" + (!f.team ? " on" : "")} onClick=${() => set({ team: null })}>${tr("Aucune")}</button></div></div>
       <${Msg} error=${err} />
-      <div class="row"><span class="spacer"></span><button type="button" onClick=${onClose}>Annuler</button>
-        <button type="button" class="primary" disabled=${busy} onClick=${save}>${shift ? "Enregistrer" : f.line_ids.length > 1 ? `Créer ${f.line_ids.length} postes` : "Créer le poste"}</button></div>
+      <div class="row"><span class="spacer"></span><button type="button" onClick=${onClose}>${tr("Annuler")}</button>
+        <button type="button" class="primary" disabled=${busy} onClick=${save}>${shift ? tr("Enregistrer") : f.line_ids.length > 1 ? tr("Créer {n} postes", { n: f.line_ids.length }) : tr("Créer le poste")}</button></div>
     </div>
   </${Dialog}>`;
 }
@@ -320,33 +323,33 @@ function DupDialog({ s, lines, list, start, now, onClose, onDone }) {
     try {
       const r = await api(`/shifts/${s.id}/dupliquer`, { method: "POST", body: { cibles, remplacer: replace } });
       const skipped = r.occupe + r.passe + r.hors_journee;
-      onDone(`${r.cree} poste(s) créé(s)${skipped ? ` · ${skipped} ignoré(s)` : ""}.`);
+      onDone(tr("{n} poste(s) créé(s)", { n: r.cree }) + (skipped ? " · " + tr("{n} ignoré(s)", { n: skipped }) : "") + ".");
     } catch (e) { setErr(e.message); }
   };
-  return html`<${Dialog} title="Dupliquer le poste" onClose=${onClose}>
+  return html`<${Dialog} title=${tr("Dupliquer le poste")} onClose=${onClose}>
     <div class="pl-form">
-      <p class="sub" style="margin:0"><b>${s.line} · ${s.recipe_code || "Sans recette"}</b> · ${hLabel(s.starts_at)}–${hLabel(s.ends_at)}</p>
-      <div class="seg light"><button type="button" class=${mode === "jours" ? "on" : ""} onClick=${() => setMode("jours")}>Plusieurs jours</button>
-        <button type="button" class=${mode === "date" ? "on" : ""} onClick=${() => setMode("date")}>Date et heure</button></div>
+      <p class="sub" style="margin:0"><b>${s.line} · ${s.recipe_code || tr("Sans recette")}</b> · ${hLabel(s.starts_at)}–${hLabel(s.ends_at)}</p>
+      <div class="seg light"><button type="button" class=${mode === "jours" ? "on" : ""} onClick=${() => setMode("jours")}>${tr("Plusieurs jours")}</button>
+        <button type="button" class=${mode === "date" ? "on" : ""} onClick=${() => setMode("date")}>${tr("Date et heure")}</button></div>
       ${mode === "jours" ? html`
         <div class="pl-cal"><span></span>${["lun", "mar", "mer", "jeu", "ven", "sam", "dim"].map(x => html`<span class="dh">${x}</span>`)}
           ${[0, 1].map(w => html`<span class="wk">${fWeek.format(addDays(w0, 7 * w))}</span>${[...Array(7)].map((_, k) => {
             const i = 7 * w + k, src = i === srcDay && lns.length === 1 && lns[0] === s.line_id, past = startOn(i).getTime() <= now;
             const busy = lns.some(l => busyOn(i, l));
             return html`<button type="button" class=${(sel.includes(i) ? "on " : "") + (src ? "src " : "") + (busy ? "busy" : "")} disabled=${src || past}
-              title=${src ? "Poste d'origine" : busy ? "Créneau occupé" : ""} onClick=${() => setSel(sel.includes(i) ? sel.filter(x => x !== i) : [...sel, i])}>${addDays(w0, i).getDate()}</button>`;
+              title=${src ? tr("Poste d'origine") : busy ? tr("Créneau occupé") : ""} onClick=${() => setSel(sel.includes(i) ? sel.filter(x => x !== i) : [...sel, i])}>${addDays(w0, i).getDate()}</button>`;
           })}`)}</div>
-        <div class="f"><span class="lbl">Lignes</span><div class="chips">${lines.map(l => html`<button type="button" class=${"chip" + (lns.includes(l.id) ? " on" : "")}
+        <div class="f"><span class="lbl">${tr("Lignes")}</span><div class="chips">${lines.map(l => html`<button type="button" class=${"chip" + (lns.includes(l.id) ? " on" : "")}
           onClick=${() => setLns(lns.includes(l.id) ? (lns.length > 1 ? lns.filter(x => x !== l.id) : lns) : [...lns, l.id])}>${l.name}</button>`)}</div></div>`
       : html`<div class="pl-2">
-          <label class="f">Date<select value=${at.day} onChange=${e => setAt({ ...at, day: +e.target.value })}>
+          <label class="f">${tr("Date")}<select value=${at.day} onChange=${e => setAt({ ...at, day: +e.target.value })}>
             ${[...Array(14)].map((_, i) => html`<option value=${i}>${fDayLong.format(addDays(w0, i))}</option>`)}</select></label>
-          <label class="f">Début<input type="time" step="900" value=${at.time} onInput=${e => setAt({ ...at, time: e.target.value })} /></label></div>
-        <div class="f"><span class="lbl">Ligne</span><div class="chips">${lines.map(l => html`<button type="button" class=${"chip" + (at.line === l.id ? " on" : "")} onClick=${() => setAt({ ...at, line: l.id })}>${l.name}</button>`)}</div></div>`}
-      <label class="pl-opt"><input type="checkbox" checked=${replace} onChange=${e => setReplace(e.target.checked)} /> Remplacer les postes à venir déjà placés</label>
+          <label class="f">${tr("Début")}<input type="time" step="900" value=${at.time} onInput=${e => setAt({ ...at, time: e.target.value })} /></label></div>
+        <div class="f"><span class="lbl">${tr("Ligne")}</span><div class="chips">${lines.map(l => html`<button type="button" class=${"chip" + (at.line === l.id ? " on" : "")} onClick=${() => setAt({ ...at, line: l.id })}>${l.name}</button>`)}</div></div>`}
+      <label class="pl-opt"><input type="checkbox" checked=${replace} onChange=${e => setReplace(e.target.checked)} /> ${tr("Remplacer les postes à venir déjà placés")}</label>
       <${Msg} error=${err} />
-      <div class="row"><span class="sub">${cibles.length} poste(s)</span><span class="spacer"></span><button type="button" onClick=${onClose}>Annuler</button>
-        <button type="button" class="primary" disabled=${!cibles.length} onClick=${go}>Dupliquer</button></div>
+      <div class="row"><span class="sub">${tr("{n} poste(s)", { n: cibles.length })}</span><span class="spacer"></span><button type="button" onClick=${onClose}>${tr("Annuler")}</button>
+        <button type="button" class="primary" disabled=${!cibles.length} onClick=${go}>${tr("Dupliquer")}</button></div>
     </div>
   </${Dialog}>`;
 }
@@ -362,20 +365,20 @@ function CopyDialog({ start, onClose, onDone }) {
   const go = async () => {
     try {
       const r = await api("/planning/copier-semaine", { method: "POST", body: { source: isoDate(start), destination: isoDate(target), ...o, remplacer: n > 0 && o.remplacer } });
-      onDone(`${r.cree} postes copiés${r.occupe ? ` · ${r.occupe} ignoré(s)` : ""}.`, dst);
+      onDone(tr("{n} postes copiés", { n: r.cree }) + (r.occupe ? " · " + tr("{n} ignoré(s)", { n: r.occupe }) : "") + ".", dst);
     } catch (e) { setErr(e.message); }
   };
-  const box = (k, l) => html`<label class="pl-opt"><input type="checkbox" checked=${o[k]} onChange=${e => setO({ ...o, [k]: e.target.checked })} /> ${l}</label>`;
-  return html`<${Dialog} title=${`Copier la semaine du ${fWeek.format(start)}`} onClose=${onClose}>
+  const box = (k, l) => html`<label class="pl-opt"><input type="checkbox" checked=${o[k]} onChange=${e => setO({ ...o, [k]: e.target.checked })} /> ${tr(l)}</label>`;
+  return html`<${Dialog} title=${tr("Copier la semaine du {d}", { d: fWeek.format(start) })} onClose=${onClose}>
     <div class="pl-form">
-      <label class="f">Vers<select value=${dst} onChange=${e => setDst(+e.target.value)}>
-        ${[1, 2, 3, 4].map(k => html`<option value=${k}>Semaine du ${fWeek.format(addDays(start, 7 * k))}</option>`)}</select></label>
-      <div class="f">${box("equipes", "Équipes")}${box("objectifs", "Recettes et objectifs")}${box("arrets", "Arrêts planifiés")}</div>
-      ${n > 0 && html`<div class="f"><span class="lbl">${n} postes déjà planifiés</span>
-        <label class="pl-opt"><input type="radio" name="pl-mode" checked=${!o.remplacer} onChange=${() => setO({ ...o, remplacer: false })} /> Compléter</label>
-        <label class="pl-opt"><input type="radio" name="pl-mode" checked=${o.remplacer} onChange=${() => setO({ ...o, remplacer: true })} /> Remplacer</label></div>`}
+      <label class="f">${tr("Vers")}<select value=${dst} onChange=${e => setDst(+e.target.value)}>
+        ${[1, 2, 3, 4].map(k => html`<option value=${k}>${tr("Semaine du {d}", { d: fWeek.format(addDays(start, 7 * k)) })}</option>`)}</select></label>
+      <div class="f">${box("equipes", N_("Équipes"))}${box("objectifs", N_("Recettes et objectifs"))}${box("arrets", N_("Arrêts planifiés"))}</div>
+      ${n > 0 && html`<div class="f"><span class="lbl">${tr("{n} postes déjà planifiés", { n })}</span>
+        <label class="pl-opt"><input type="radio" name="pl-mode" checked=${!o.remplacer} onChange=${() => setO({ ...o, remplacer: false })} /> ${tr("Compléter")}</label>
+        <label class="pl-opt"><input type="radio" name="pl-mode" checked=${o.remplacer} onChange=${() => setO({ ...o, remplacer: true })} /> ${tr("Remplacer")}</label></div>`}
       <${Msg} error=${err} />
-      <div class="row"><span class="spacer"></span><button type="button" onClick=${onClose}>Annuler</button><button type="button" class="primary" onClick=${go}>Copier</button></div>
+      <div class="row"><span class="spacer"></span><button type="button" onClick=${onClose}>${tr("Annuler")}</button><button type="button" class="primary" onClick=${go}>${tr("Copier")}</button></div>
     </div>
   </${Dialog}>`;
 }
@@ -385,17 +388,17 @@ function ClearDialog({ start, lines, list, now, onClose, onDone }) {
   const [err, setErr] = useState(null);
   const n = list.filter(s => T(s.starts_at) > now && lns.includes(s.line_id)).length;
   const go = async () => {
-    try { const r = await api("/planning/vider-semaine", { method: "POST", body: { semaine: isoDate(start), line_ids: lns } }); onDone(`${r.supprimes} poste(s) supprimé(s).`); }
+    try { const r = await api("/planning/vider-semaine", { method: "POST", body: { semaine: isoDate(start), line_ids: lns } }); onDone(tr("{n} poste(s) supprimé(s).", { n: r.supprimes })); }
     catch (e) { setErr(e.message); }
   };
-  return html`<${Dialog} title=${`Vider la semaine du ${fWeek.format(start)}`} onClose=${onClose}>
+  return html`<${Dialog} title=${tr("Vider la semaine du {d}", { d: fWeek.format(start) })} onClose=${onClose}>
     <div class="pl-form">
-      <div class="f"><span class="lbl">Lignes</span><div class="chips">${lines.map(l => html`<button type="button" class=${"chip" + (lns.includes(l.id) ? " on" : "")}
+      <div class="f"><span class="lbl">${tr("Lignes")}</span><div class="chips">${lines.map(l => html`<button type="button" class=${"chip" + (lns.includes(l.id) ? " on" : "")}
         onClick=${() => setLns(lns.includes(l.id) ? lns.filter(x => x !== l.id) : [...lns, l.id])}>${l.name}</button>`)}</div></div>
-      <div class="warn" style="padding:8px 12px;border-radius:10px">${n} poste(s) supprimé(s), sans retour possible.</div>
+      <div class="warn" style="padding:8px 12px;border-radius:10px">${tr("{n} poste(s) supprimé(s), sans retour possible.", { n })}</div>
       <${Msg} error=${err} />
-      <div class="row"><span class="spacer"></span><button type="button" onClick=${onClose}>Annuler</button>
-        <button type="button" class="danger" disabled=${!n} onClick=${go}>Supprimer ${n} poste(s)</button></div>
+      <div class="row"><span class="spacer"></span><button type="button" onClick=${onClose}>${tr("Annuler")}</button>
+        <button type="button" class="danger" disabled=${!n} onClick=${go}>${tr("Supprimer {n} poste(s)", { n })}</button></div>
     </div>
   </${Dialog}>`;
 }
@@ -407,15 +410,15 @@ function AutoDialog({ cfg, onClose, onSaved }) {
     const v = { ...c, ...p }; setC(v);
     try { await api("/planning/copie-auto", { method: "PUT", body: v }); setErr(null); onSaved(); } catch (e) { setErr(e.message); }
   };
-  return html`<${Dialog} title="Copie automatique" onClose=${onClose}>
+  return html`<${Dialog} title=${tr("Copie automatique")} onClose=${onClose}>
     <div class="pl-form">
-      <label class="pl-opt"><input type="checkbox" checked=${c.active} onChange=${e => save({ active: e.target.checked })} /> <b>${c.active ? "Activée" : "Désactivée"}</b></label>
-      <p class="sub" style="margin:0">Une semaine suivante vide reçoit une copie de la semaine en cours.</p>
+      <label class="pl-opt"><input type="checkbox" checked=${c.active} onChange=${e => save({ active: e.target.checked })} /> <b>${c.active ? tr("Activée") : tr("Désactivée")}</b></label>
+      <p class="sub" style="margin:0">${tr("Une semaine suivante vide reçoit une copie de la semaine en cours.")}</p>
       <div class="pl-2">
-        <label class="f">Jour<select value=${c.jour} onChange=${e => save({ jour: +e.target.value })}>${DAYS.map((d, i) => html`<option value=${i}>${d}</option>`)}</select></label>
-        <label class="f">Heure<select value=${c.heure} onChange=${e => save({ heure: +e.target.value })}>${[...Array(24)].map((_, h) => html`<option value=${h}>${h} h</option>`)}</select></label></div>
+        <label class="f">${tr("Jour")}<select value=${c.jour} onChange=${e => save({ jour: +e.target.value })}>${[0, 1, 2, 3, 4, 5, 6].map(i => html`<option value=${i}>${dayName(i)}</option>`)}</select></label>
+        <label class="f">${tr("Heure")}<select value=${c.heure} onChange=${e => save({ heure: +e.target.value })}>${[...Array(24)].map((_, h) => html`<option value=${h}>${h} h</option>`)}</select></label></div>
       <${Msg} error=${err} />
-      <div class="row"><span class="spacer"></span><button type="button" onClick=${onClose}>Fermer</button></div>
+      <div class="row"><span class="spacer"></span><button type="button" onClick=${onClose}>${tr("Fermer")}</button></div>
     </div>
   </${Dialog}>`;
 }

@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
 from . import auth, db, metrics, typedefs, workers
+from .i18n import langue_valide
 from .config import settings
 from .routes_catalog import router as catalog_router
 from .routes_lines import router as lines_router
@@ -76,8 +77,26 @@ async def logout(response: Response):
 
 @app.get("/api/session")
 async def me(user: auth.User = Depends(auth.current_user)):
-    return {"username": user.username, "role": user.role, "display_name": user.display_name,
+    async with db.pool().acquire() as conn:
+        langue = await conn.fetchval("SELECT langue FROM mes.app_user WHERE username = $1", user.username)
+    return {"username": user.username, "role": user.role, "display_name": user.display_name, "langue": langue,
             "version": app.version, "ldap": bool(settings.ldap_url), "auth": not settings.auth_disabled}
+
+
+class Langue(BaseModel):
+    langue: str | None = None
+
+
+@app.put("/api/session/langue")
+async def set_langue(body: Langue, user: auth.User = Depends(auth.current_user)):
+    """Langue de l'interface de l'utilisateur connecté, retrouvée sur tous les postes."""
+    try:
+        langue = langue_valide(body.langue)
+    except ValueError:
+        raise HTTPException(400, "Langue inconnue")
+    async with db.pool().acquire() as conn:
+        await conn.execute("UPDATE mes.app_user SET langue = $2 WHERE username = $1", user.username, langue)
+    return {"langue": langue}
 
 
 GRAFANA_ROLE = {"admin": "Admin", "maintenance": "Viewer", "chef_equipe": "Viewer", "operateur": "Viewer"}

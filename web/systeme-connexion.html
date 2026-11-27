@@ -22,16 +22,21 @@
 </head>
 <body>
 <form id="f">
-  <h1>Console d'exploitation</h1>
-  <p>MES v3 · connectez-vous avec votre compte MES ou Active Directory.</p>
-  <label for="u">Identifiant</label>
+  <h1 data-en="Operations console">Console d'exploitation</h1>
+  <p data-en="MES v3 · sign in with your MES or Active Directory account.">MES v3 · connectez-vous avec votre compte MES ou Active Directory.</p>
+  <label for="u" data-en="Username">Identifiant</label>
   <input id="u" autocomplete="username" required autofocus>
-  <label for="p">Mot de passe</label>
+  <label for="p" data-en="Password">Mot de passe</label>
   <input id="p" type="password" autocomplete="current-password" required>
-  <button type="submit">Se connecter</button>
+  <button type="submit" data-en="Sign in">Se connecter</button>
   <div class="err" id="err" role="alert"></div>
 </form>
 <script>
+  // langue de ce navigateur (choisie dans l'application, ou celle du navigateur)
+  let lang; try { lang = localStorage.getItem("mes-langue"); } catch (e) {}
+  lang = lang || ((navigator.language || "fr").slice(0, 2) === "en" ? "en" : "fr");
+  const EN = lang === "en";
+  if (EN) { document.documentElement.lang = "en"; document.querySelectorAll("[data-en]").forEach(el => { el.textContent = el.dataset.en; }); }
   document.getElementById("f").onsubmit = async e => {
     e.preventDefault();
     const err = document.getElementById("err");
@@ -39,7 +44,9 @@
     const r = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: document.getElementById("u").value, password: document.getElementById("p").value }) });
     if (r.ok) location.reload();
-    else err.textContent = r.status === 401 ? "Identifiant ou mot de passe incorrect." : r.status >= 502 ? "Connexion impossible : l'API MES est arrêtée. Démarrez-la avec ./mesctl start." : "Connexion impossible (" + r.status + ").";
+    else err.textContent = r.status === 401 ? (EN ? "Wrong username or password." : "Identifiant ou mot de passe incorrect.")
+      : r.status >= 502 ? (EN ? "Cannot sign in: the MES API is stopped. Start it with ./mesctl start." : "Connexion impossible : l'API MES est arrêtée. Démarrez-la avec ./mesctl start.")
+      : (EN ? "Cannot sign in (" : "Connexion impossible (") + r.status + ").";
   };
 </script>
 </body>
