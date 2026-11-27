@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import db, workers
+from . import db, grafana, workers
 from . import energy as energy_split
 from .auth import ROLES, User, current_user, hash_password, require
 from .i18n import langue_valide
@@ -502,6 +502,7 @@ async def upsert_user(body: UserBody, user: User = Depends(require())):
                   password_hash = coalesce($4, mes.app_user.password_hash), active = $5, langue = $6""",
             body.username, body.display_name, body.role, hash_password(body.password) if body.password else None, body.active, langue)
         await db.audit(conn, user.username, "utilisateur", "app_user", body.username, {"role": body.role, "actif": body.active})
+    grafana.oublier(body.username)
     return {"ok": True}
 
 

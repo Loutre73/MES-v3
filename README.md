@@ -34,7 +34,7 @@ Rôles : opérateur, chef d'équipe, maintenance, administrateur. Avec l'AD, le 
 | `db` | PostgreSQL 16 + TimescaleDB : historian, catalogue, données MES |
 | `migrate` | Applique les migrations SQL (`db/migrations`) et les durées de conservation, à chaque démarrage |
 | `collector` | Client OPC UA : abonnements à 1 s, deadband par tag, écriture par lots, tampon disque, rechargement du catalogue à chaud |
-| `grafana` | Tableaux de bord livrés en fichiers (`grafana/dashboards`) |
+| `grafana` | Tableaux de bord livrés en fichiers (`grafana/dashboards`, copies anglaises générées dans `grafana/dashboards-en` par `grafana/generate/traduire.py`) |
 | `simulator` | Simulateur S7-1500 (profil `sim`) : 10 000 tags (moteurs, compteurs, lignes, mesures) et DB de recette ; règles et scénarios pilotés depuis la console d'exploitation |
 | `ops` | Agent d'exploitation : sert la console `/systeme` (état des services, démarrage et arrêt, journaux, historisation, simulation) |
 | `prometheus`, `node-exporter`, `docker-exporter`, `process-exporter`, `postgres-exporter` | Surveillance technique (profil `monitoring`), voir « Supervision technique » |

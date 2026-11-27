@@ -26,6 +26,8 @@ jobs:
         run: for f in web/*.js; do node --check "$f"; done
       - name: Traductions de l'interface
         run: node web/tests/i18n.test.mjs
+      - name: Traductions des tableaux Grafana
+        run: python3 grafana/generate/traduire.py --verifier
 
   smoke:
     # Pile complète avec le simulateur : vérifie que les données arrivent dans l'historian

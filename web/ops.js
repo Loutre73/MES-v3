@@ -978,10 +978,11 @@ const VIEWS = [
 ];
 
 function GrafanaView() {
-  const src = "/grafana/d/mes-systeme/systeme?" + new URLSearchParams({ orgId: "1", from: "now-1h", to: "now", refresh: "10s" }) + "&kiosk";
+  const uid = getLang() === "fr" ? "mes-systeme" : "mes-systeme-" + getLang();
+  const src = "/grafana/d/" + uid + "?" + new URLSearchParams({ orgId: "1", from: "now-1h", to: "now", refresh: "10s" }) + "&kiosk";
   return html`<section class="tile" style="flex:1;padding:0">
     <iframe id="dash" title=${tr("Tableau de bord Système")} src=${src} style="flex:1;border:0;width:100%;height:100%;border-radius:var(--radius)"></iframe>
-    <p class="sub small" style="margin:6px 12px">${tr("Le tableau Grafana « Système » nécessite le profil de surveillance (./mesctl monitoring on) et Grafana en service.")} <a href="/grafana/d/mes-systeme" target="_blank" rel="noopener">${tr("Ouvrir dans Grafana ↗")}</a></p>
+    <p class="sub small" style="margin:6px 12px">${tr("Le tableau Grafana « Système » nécessite le profil de surveillance (./mesctl monitoring on) et Grafana en service.")} <a href=${"/grafana/d/" + uid} target="_blank" rel="noopener">${tr("Ouvrir dans Grafana ↗")}</a></p>
   </section>`;
 }
 
