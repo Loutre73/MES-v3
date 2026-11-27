@@ -24,6 +24,8 @@ jobs:
       - run: python -m pytest -q ops/tests simulator/tests deploy/mac/tests
       - name: Syntaxe de l'interface web
         run: for f in web/*.js; do node --check "$f"; done
+      - name: Traductions de l'interface
+        run: node web/tests/i18n.test.mjs
 
   smoke:
     # Pile complète avec le simulateur : vérifie que les données arrivent dans l'historian

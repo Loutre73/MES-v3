@@ -1,5 +1,6 @@
 // Outils partagés de l'interface : accès API, formats, composants communs, thème clair/sombre.
 import { html, useState, useEffect, useCallback, useRef, useLayoutEffect } from "./vendor/preact-htm.module.js";
+import { tr, N_, fmt, locale, LANGS, setLang, useLang } from "./i18n.js";
 
 // ----------------------------------------------------------------------------- outils
 async function api(path, opts = {}) {
@@ -7,10 +8,10 @@ async function api(path, opts = {}) {
   if (opts.body instanceof FormData) init.body = opts.body;
   else if (opts.body !== undefined) { init.body = JSON.stringify(opts.body); init.headers["Content-Type"] = "application/json"; }
   const r = await fetch("/api" + path, init);
-  if (r.status === 401 && path !== "/session") { window.dispatchEvent(new Event("mes-logout")); throw new Error("Session expirée"); }
+  if (r.status === 401 && path !== "/session") { window.dispatchEvent(new Event("mes-logout")); throw new Error(tr("Session expirée")); }
   const ct = r.headers.get("content-type") || "";
   const data = ct.includes("json") ? await r.json() : await r.text();
-  if (!r.ok) throw new Error((data && data.detail && (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail))) || r.statusText);
+  if (!r.ok) throw new Error((data && data.detail && (typeof data.detail === "string" ? tr(data.detail) : JSON.stringify(data.detail))) || r.statusText);
   return data;
 }
 
@@ -29,12 +30,12 @@ function useApi(path, deps = [], refreshMs = 0) {
   return { ...state, reload };
 }
 
-const fmtDT = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
-const fmtT = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
-const fmtD = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit" });
+const fmtDT = fmt({ dateStyle: "short", timeStyle: "short" });
+const fmtT = fmt({ hour: "2-digit", minute: "2-digit" });
+const fmtD = fmt({ day: "2-digit", month: "2-digit" });
 const dt = v => (v ? fmtDT.format(new Date(v)) : "");
 const hm = v => (v ? fmtT.format(new Date(v)) : "");
-const num = (v, d = 1) => (v === null || v === undefined || v === "" ? "–" : Number(v).toLocaleString("fr-FR", { maximumFractionDigits: d, minimumFractionDigits: d }));
+const num = (v, d = 1) => (v === null || v === undefined || v === "" ? "–" : Number(v).toLocaleString(locale(), { maximumFractionDigits: d, minimumFractionDigits: d }));
 const pct = v => (v === null || v === undefined ? "–" : num(v * 100, 1) + " %");
 function dur(s) {
   if (s === null || s === undefined) return "–";
@@ -52,7 +53,9 @@ function dhms(s) {
 const toLocalInput = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
 const fromLocalInput = v => new Date(v).toISOString();
 
-const ROLE_LABEL = { operateur: "Opérateur", chef_equipe: "Chef d'équipe", maintenance: "Maintenance", admin: "Administrateur" };
+// libellés des rôles dans la langue courante
+const ROLE_FR = { operateur: N_("Opérateur"), chef_equipe: N_("Chef d'équipe"), maintenance: N_("Maintenance"), admin: N_("Administrateur") };
+const ROLE_LABEL = new Proxy(ROLE_FR, { get: (o, k) => (o[k] ? tr(o[k]) : undefined) });
 const can = (user, ...roles) => user.role === "admin" || roles.includes(user.role);
 
 function Msg({ error, ok }) {
@@ -85,7 +88,7 @@ function useAction() {
 // series : [{ points: [[t_ms, v]], color, label }] ; zones : [{ from, to, color }] ; bands : [{ y, color, label }]
 const niceStep = r => { const p = 10 ** Math.floor(Math.log10(r)), f = r / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; };
 const H_STEPS = [1, 2, 3, 6, 12, 24, 48, 96, 168].map(h => h * 3600e3);
-function Chart({ series, height = 220, bands = [], zones = [], unit = "", area = true, decimals = null, empty = "Pas de données sur la période." }) {
+function Chart({ series, height = 220, bands = [], zones = [], unit = "", area = true, decimals = null, empty = N_("Pas de données sur la période.") }) {
   const ref = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState(null);
@@ -96,7 +99,7 @@ function Chart({ series, height = 220, bands = [], zones = [], unit = "", area =
   }, []);
   const fixedH = typeof height === "number";
   const all = series.flatMap(s => s.points.filter(p => p[1] !== null && p[1] !== undefined));
-  if (!all.length) return html`<div ref=${ref} class="chart-box" style=${fixedH ? { height: height + "px" } : { flex: 1, minHeight: "80px" }}><p class="empty">${empty}</p></div>`;
+  if (!all.length) return html`<div ref=${ref} class="chart-box" style=${fixedH ? { height: height + "px" } : { flex: 1, minHeight: "80px" }}><p class="empty">${tr(empty)}</p></div>`;
   const W = size.w || 600, H = size.h || (fixedH ? height : 160);
   const P = { l: 44, r: 16, t: 12, b: 22 };
   const xs = all.map(p => p[0]), ys = all.map(p => p[1]).concat(bands.map(b => b.y)).concat(zones.flatMap(z => [z.from, z.to]).filter(v => isFinite(v)));
@@ -184,9 +187,23 @@ const SUN = "M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4
 const MOON = "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z";
 export function ThemeToggle() {
   const t = useTheme();
-  return html`<div class="seg" role="group" aria-label="Thème">
-    <button type="button" class=${t === "clair" ? "on" : ""} aria-pressed=${t === "clair"} onClick=${() => setTheme("clair")}><${Icon} d=${SUN} size="14" />Clair</button>
-    <button type="button" class=${t === "sombre" ? "on" : ""} aria-pressed=${t === "sombre"} onClick=${() => setTheme("sombre")}><${Icon} d=${MOON} size="14" />Sombre</button>
+  return html`<div class="seg" role="group" aria-label=${tr("Thème")}>
+    <button type="button" class=${t === "clair" ? "on" : ""} aria-pressed=${t === "clair"} onClick=${() => setTheme("clair")}><${Icon} d=${SUN} size="14" />${tr("Clair")}</button>
+    <button type="button" class=${t === "sombre" ? "on" : ""} aria-pressed=${t === "sombre"} onClick=${() => setTheme("sombre")}><${Icon} d=${MOON} size="14" />${tr("Sombre")}</button>
+  </div>`;
+}
+
+// ----------------------------------------------------------------------------- langue de l'utilisateur
+// Choix enregistré dans le compte (sauf avant connexion : seul ce navigateur s'en souvient)
+export function chooseLang(l, save = true) {
+  setLang(l);
+  if (save) api("/session/langue", { method: "PUT", body: { langue: l } }).catch(() => { /* hors connexion */ });
+}
+export function LangToggle({ save = true }) {
+  const l = useLang();
+  return html`<div class="seg" role="group" aria-label=${tr("Langue")}>
+    ${Object.entries(LANGS).map(([k, [name]]) => html`<button type="button" class=${l === k ? "on" : ""} aria-pressed=${l === k} title=${name}
+      onClick=${() => chooseLang(k, save)}>${k.toUpperCase()}</button>`)}
   </div>`;
 }
 
@@ -212,7 +229,7 @@ export function Band({ over, title, accent, children, back }) {
       ${back}
       <div><p class="over">${over}</p><h1>${title} ${accent && html`<span class="accent">${accent}</span>`}</h1></div>
     </div>
-    <div class="band-tools">${children}<${ThemeToggle} /></div>
+    <div class="band-tools">${children}<${LangToggle} /><${ThemeToggle} /></div>
   </header>`;
 }
 
@@ -221,21 +238,21 @@ export function Tile({ title, id, open, onToggle, col, row, children, detail, ex
   const isOpen = open === id;
   return html`<article class=${`tile ${cls} ${isOpen ? "open" : ""}`} style=${isOpen ? {} : { gridColumn: col, gridRow: row }}>
     <div class="th"><h2>${title}</h2><span class="spacer"></span>${extra}
-      ${onToggle && html`<button type="button" class="xb" onClick=${() => onToggle(isOpen ? null : id)} aria-label=${isOpen ? "Réduire " + title : "Agrandir " + title} title=${isOpen ? "Réduire" : "Agrandir"}>
+      ${onToggle && html`<button type="button" class="xb" onClick=${() => onToggle(isOpen ? null : id)} aria-label=${tr(isOpen ? "Réduire {x}" : "Agrandir {x}", { x: title })} title=${isOpen ? tr("Réduire") : tr("Agrandir")}>
         <${Icon} d=${isOpen ? ICON.close : ICON.expand} /></button>`}</div>
     ${isOpen && detail ? detail : children}
   </article>`;
 }
 
 // pastille « i » : le détail (légende, explication) ne s'affiche qu'au toucher
-export function Info({ children, label = "Informations" }) {
+export function Info({ children, label = N_("Informations") }) {
   const [open, set] = useState(false);
   useEffect(() => {
     if (!open) return;
     const close = e => { if (!e.target.closest || !e.target.closest(".info")) set(false); };
     addEventListener("pointerdown", close); return () => removeEventListener("pointerdown", close);
   }, [open]);
-  return html`<span class="info"><button type="button" class=${"ib" + (open ? " on" : "")} aria-label=${label} aria-expanded=${open} onClick=${() => set(!open)}>i</button>
+  return html`<span class="info"><button type="button" class=${"ib" + (open ? " on" : "")} aria-label=${tr(label)} aria-expanded=${open} onClick=${() => set(!open)}>i</button>
     ${open && html`<div class="info-pop" role="note">${children}</div>`}</span>`;
 }
 
@@ -245,17 +262,17 @@ export function Pill({ kind = "idle", children }) {
 
 // état d'une ligne à partir de la dernière valeur de marche
 export function lineState(l) {
-  if (l.en_marche === null || l.en_marche === undefined) return { kind: "idle", label: "Inconnu" };
-  if (l.en_marche < 0.5) return { kind: "bad", label: "À l'arrêt" };
+  if (l.en_marche === null || l.en_marche === undefined) return { kind: "idle", label: tr("Inconnu") };
+  if (l.en_marche < 0.5) return { kind: "bad", label: tr("À l'arrêt") };
   const nominal = l.cadence_nominale_th;
-  if (nominal && l.debit !== null && l.debit !== undefined && l.debit < 0.7 * nominal) return { kind: "warn", label: "Ralenti" };
-  return { kind: "good", label: "En marche" };
+  if (nominal && l.debit !== null && l.debit !== undefined && l.debit < 0.7 * nominal) return { kind: "warn", label: tr("Ralenti") };
+  return { kind: "good", label: tr("En marche") };
 }
 // couleur d'un TRS (seuils usuels)
 export const oeeKind = v => (v === null || v === undefined ? "idle" : v >= 0.75 ? "good" : v >= 0.6 ? "warn" : "bad");
 
-export const fmtDay = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" });
-export const fmtDayShort = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+export const fmtDay = fmt({ weekday: "long", day: "numeric", month: "long" });
+export const fmtDayShort = fmt({ weekday: "short", day: "numeric", month: "short" });
 export function nowLabel() {
   const d = new Date();
   const s = fmtDay.format(d);
@@ -272,12 +289,12 @@ export function Frise({ start, end, stops = [], slows = [], small = false, sel =
   const nowX = x(now);
   const runW = Math.min(100, nowX);
   const planned = kind !== "production";
-  return html`<div class=${"frise" + (small ? " small" : "")} role=${onPick ? "group" : "img"} aria-label="Frise du poste">
+  return html`<div class=${"frise" + (small ? " small" : "")} role=${onPick ? "group" : "img"} aria-label=${tr("Frise du poste")}>
     <div class=${planned ? "seg-stop planned" : "seg-run"} style=${{ left: 0, width: runW + "%" }}></div>
     ${slows.map(r => html`<div class="seg-slow" style=${{ left: x(r.starts_at) + "%", width: Math.max(0.3, x(r.ends_at) - x(r.starts_at)) + "%" }}></div>`)}
     ${stops.map(s => {
       const l = x(s.starts_at), w = Math.max(x(s.ends_at || now) - l, 0.4);
-      const label = `Arrêt ${hm(s.starts_at)}, ${dur(s.duree_s)}${s.cause ? " · " + s.cause : s.planned ? " · planifié" : " · à qualifier"}`;
+      const label = tr("Arrêt {h}, {d}", { h: hm(s.starts_at), d: dur(s.duree_s) }) + (s.cause ? " · " + s.cause : s.planned ? " · " + tr("planifié") : " · " + tr("à qualifier"));
       return onPick
         ? html`<button type="button" class=${`seg-stop ${stopClass(s)} ${sel === s.id ? "sel" : ""}`} title=${label} aria-label=${label}
             style=${{ left: l + "%", width: `max(${w}%, 14px)` }} onClick=${() => onPick(s)}></button>`
@@ -294,14 +311,14 @@ export function Ticks({ start, end, every = 1 }) {
 
 // barres verticales simples (séries horaires) ; libellés en HTML pour rester lisibles quelle que soit la taille
 export function Bars({ data, height = 120, color = "var(--primary)", target = null, unit = "", labelEvery = 3, slots = 0 }) {
-  if (!data.length) return html`<p class="empty">Pas de données.</p>`;
+  if (!data.length) return html`<p class="empty">${tr("Pas de données.")}</p>`;
   const n = Math.max(data.length, slots);
   const W = 600, H = height, P = { t: 6, b: 2 };
   const max = Math.max(1, ...data.map(d => d.v || 0), target || 0, ...data.map(d => d.target || 0)) * 1.1;
   const bw = W / n;
   const Y = v => P.t + (1 - v / max) * (H - P.t - P.b);
   return html`<div style="display:flex;flex-direction:column;height:100%;min-height:0">
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;flex:1;min-height:0;display:block" role="img" aria-label=${"Histogramme " + unit}>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;flex:1;min-height:0;display:block" role="img" aria-label=${tr("Histogramme {u}", { u: unit })}>
       ${data.map((d, i) => html`<g>
         <rect x=${i * bw + bw * 0.15} y=${Y(d.v || 0)} width=${bw * 0.7} height=${Math.max(0, H - P.b - Y(d.v || 0))}
           style=${{ fill: d.color || color }}><title>${d.label} : ${num(d.v, 0)} ${unit}</title></rect>
@@ -336,4 +353,5 @@ export function useToast() {
   return [node, show];
 }
 
+export { tr, N_, fmt };
 export { api, useApi, useAction, Msg, Dialog, Chart, dt, hm, num, pct, dur, dhms, toLocalInput, fromLocalInput, ROLE_LABEL, can };

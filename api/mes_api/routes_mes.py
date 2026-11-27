@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from . import db, workers
 from . import energy as energy_split
 from .auth import ROLES, User, current_user, hash_password, require
+from .i18n import langue_valide
 
 router = APIRouter(prefix="/api", tags=["exploitation"])
 
@@ -474,7 +475,7 @@ async def put_setting(key: str, value: dict, user: User = Depends(require("maint
 @router.get("/utilisateurs")
 async def users(_: User = Depends(require())):
     async with db.pool().acquire() as conn:
-        return db.rows(await conn.fetch("SELECT username, display_name, role, source, active, last_login FROM mes.app_user ORDER BY username"))
+        return db.rows(await conn.fetch("SELECT username, display_name, role, source, active, last_login, langue FROM mes.app_user ORDER BY username"))
 
 
 class UserBody(BaseModel):
@@ -483,18 +484,23 @@ class UserBody(BaseModel):
     role: str
     password: str | None = None
     active: bool = True
+    langue: str | None = None
 
 
 @router.post("/utilisateurs")
 async def upsert_user(body: UserBody, user: User = Depends(require())):
     if body.role not in ROLES:
         raise HTTPException(400, "Rôle inconnu")
+    try:
+        langue = langue_valide(body.langue)
+    except ValueError:
+        raise HTTPException(400, "Langue inconnue")
     async with db.pool().acquire() as conn:
         await conn.execute(
-            """INSERT INTO mes.app_user (username, display_name, role, password_hash, active) VALUES ($1, $2, $3, $4, $5)
+            """INSERT INTO mes.app_user (username, display_name, role, password_hash, active, langue) VALUES ($1, $2, $3, $4, $5, $6)
                ON CONFLICT (username) DO UPDATE SET display_name = coalesce($2, mes.app_user.display_name), role = $3,
-                  password_hash = coalesce($4, mes.app_user.password_hash), active = $5""",
-            body.username, body.display_name, body.role, hash_password(body.password) if body.password else None, body.active)
+                  password_hash = coalesce($4, mes.app_user.password_hash), active = $5, langue = $6""",
+            body.username, body.display_name, body.role, hash_password(body.password) if body.password else None, body.active, langue)
         await db.audit(conn, user.username, "utilisateur", "app_user", body.username, {"role": body.role, "actif": body.active})
     return {"ok": True}
 

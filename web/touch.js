@@ -2,6 +2,8 @@
 // En mode tactile, toucher un champ de saisie ouvre le clavier adapté : pavé numérique pour un nombre,
 // pavé HHMM pour une heure, AZERTY pour un texte. Le champ reste visible au-dessus du clavier, surligné.
 // Le choix est mémorisé sur le poste ; il est activé d'office sur un écran tactile. La taille des éléments ne change pas.
+import { tr, getLang, onLang } from "./i18n.js";
+
 const KEY = "mes-tactile";
 const FIELDS = "input:not([type]), input[type=text], input[type=search], input[type=password], input[type=email], input[type=number], input[type=time], textarea";
 let touch = false, kb = null;   // kb : { el, kind: "num" | "time" | "text", val, label, caps, digits }
@@ -12,13 +14,15 @@ const sw = document.createElement("button");
 sw.type = "button";
 sw.className = "touchsw";
 sw.setAttribute("role", "switch");
-sw.innerHTML = `<span class="sw" aria-hidden="true"></span>Mode tactile`;
+const swLabel = () => { sw.innerHTML = `<span class="sw" aria-hidden="true"></span>${esc(tr("Mode tactile"))}`; };
+swLabel();
 const pad = document.createElement("div");
 pad.id = "kbd";
 pad.hidden = true;
 pad.setAttribute("role", "dialog");
-pad.setAttribute("aria-label", "Clavier");
+pad.setAttribute("aria-label", tr("Clavier"));
 document.body.append(sw, pad);
+onLang(() => { swLabel(); pad.setAttribute("aria-label", tr("Clavier")); if (kb) draw(); });
 
 function setTouch(on) {
   touch = on;
@@ -31,7 +35,7 @@ function setTouch(on) {
 function kindOf(el) { return el.type === "time" ? "time" : el.type === "number" ? "num" : "text"; }
 function labelOf(el) {
   const l = el.getAttribute("aria-label") || (el.closest("label") && el.closest("label").textContent.trim()) || el.placeholder;
-  return l || "Saisie";
+  return l || tr("Saisie");
 }
 
 function open(el) {
@@ -67,18 +71,19 @@ function draw() {
   } else if (kb.digits) {
     keys = `<div class="krow">${[..."1234567890"].map(c => key(c)).join("")}</div>
       <div class="krow">${[..."/:.,()+-°%@"].map(c => key(c)).join("")}${key("back", "⌫", "wide")}</div>
-      <div class="krow">${key("abc", "ABC", "wide")}${key(" ", "Espace", "space")}${key("ok", "OK", "wide ok")}</div>`;
+      <div class="krow">${key("abc", "ABC", "wide")}${key(" ", esc(tr("Espace")), "space")}${key("ok", "OK", "wide ok")}</div>`;
   } else {
-    const rows = ["azertyuiop", "qsdfghjklm", "wxcvbn'é"].map(r => [...r].map(c => key(kb.caps ? c.toUpperCase() : c)).join(""));
+    // AZERTY en français, QWERTY sinon
+    const rows = (getLang() === "fr" ? ["azertyuiop", "qsdfghjklm", "wxcvbn'é"] : ["qwertyuiop", "asdfghjkl'", "zxcvbnm-"]).map(r => [...r].map(c => key(kb.caps ? c.toUpperCase() : c)).join(""));
     keys = `<div class="krow">${rows[0]}</div><div class="krow">${rows[1]}</div>
       <div class="krow">${key("caps", "⇧", "wide" + (kb.caps ? " on" : ""))}${rows[2]}${key("back", "⌫", "wide")}</div>
-      <div class="krow">${key("123", "123", "wide")}${key(" ", "Espace", "space")}${key("ok", "OK", "wide ok")}</div>`;
+      <div class="krow">${key("123", "123", "wide")}${key(" ", esc(tr("Espace")), "space")}${key("ok", "OK", "wide ok")}</div>`;
   }
   const v = shown();
   pad.innerHTML = `<div class="kbd-in"><div class="kbd-head"><span class="kl">${esc(kb.label)}</span>
-    <span class="kv num">${v ? esc(v) : "<i>vide</i>"}</span>
+    <span class="kv num">${v ? esc(v) : `<i>${esc(tr("vide"))}</i>`}</span>
     ${kb.kind === "time" ? `<span class="kh">HH MM</span>` : ""}
-    <button type="button" class="key wide" data-k="cancel">Annuler</button></div>${keys}</div>`;
+    <button type="button" class="key wide" data-k="cancel">${esc(tr("Annuler"))}</button></div>${keys}</div>`;
 }
 
 function flash() {
