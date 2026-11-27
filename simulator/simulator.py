@@ -126,6 +126,24 @@ class Plant:
             inst.state["line"] = lines[k % len(lines)] if lines and k < 4 * len(lines) else None
         return inst.state["line"]
 
+    # compteurs cumulés : un automate les garde à travers un redémarrage ; le simulateur les enregistre
+    COUNTERS = {"compteur_energie": ("Energie_kWh",), "ligne": ("Tonnage_t",), "moteur": ("Heures",)}
+
+    def counters(self) -> dict:
+        return {f"{i.name}.{m}": i.vars[m].raw for i in self.instances for m in self.COUNTERS.get(i.struct, ()) if m in i.vars}
+
+    def restore_counters(self, saved: dict) -> int:
+        n = 0
+        for i in self.instances:
+            for m in self.COUNTERS.get(i.struct, ()):
+                v = saved.get(f"{i.name}.{m}")
+                if m in i.vars and isinstance(v, (int, float)):
+                    var = i.vars[m]
+                    var.raw = self.cast(var, v)
+                    self._touched[id(var)] = var     # publié au premier cycle
+                    n += 1
+        return n
+
     def bind_engine(self, engine: Engine) -> None:
         self.engine = engine
         engine.bind(self.instances, {k: [m for m, _ in v] for k, v in STRUCTS.items()})
@@ -471,6 +489,27 @@ class Control:
         except OSError as e:
             log.warning("règles non enregistrées : %s", e)
 
+    def load_counters(self) -> None:
+        f = self.path.with_name("compteurs.json") if self.path else None
+        if f and f.exists():
+            try:
+                n = self.plant.restore_counters(json.loads(f.read_text(encoding="utf-8")))
+                log.info("%d compteurs repris là où ils en étaient", n)
+            except (OSError, ValueError) as e:
+                log.warning("compteurs enregistrés ignorés : %s", e)
+
+    def save_counters(self) -> None:
+        f = self.path.with_name("compteurs.json") if self.path else None
+        if not f:
+            return
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.plant.counters()), encoding="utf-8")
+            tmp.replace(f)
+        except OSError as e:
+            log.warning("compteurs non enregistrés : %s", e)
+
     def tick(self, n: int) -> None:
         self.changes += n
         now = time.monotonic()
@@ -593,13 +632,18 @@ async def main():
     plant.engine.load()
     ctl = Control(plant, data_dir)
     ctl.load()
+    ctl.load_counters()   # sinon les compteurs repartent en arrière et l'énergie est comptée deux fois
     await serve(int(os.environ.get("SIM_CONTROL_PORT", "8090")), ctl.handle)
 
     await server.start()
     log.info("Serveur OPC UA démarré sur %s", args.endpoint)
+    saved_at = time.monotonic()
     try:
         nxt = time.monotonic()
         while True:
+            if time.monotonic() - saved_at >= 30:
+                ctl.save_counters()
+                saved_at = time.monotonic()
             period = float(cfg.get("update_interval_s", 1.0))
             plant.step(period)   # le premier tour publie aussi les valeurs initiales
             # effet « Coupure OPC UA » : le serveur s'arrête puis redémarre (les clients se reconnectent)
@@ -629,6 +673,7 @@ async def main():
                 nxt = time.monotonic()
             await asyncio.sleep(max(0.0, delay))
     finally:
+        ctl.save_counters()
         if ctl.opc_up:
             await server.stop()
 
