@@ -24,6 +24,7 @@ import math
 import os
 import random
 import re
+import signal
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -601,6 +602,9 @@ async def serve(port: int, handler):
     return await asyncio.start_server(client, "0.0.0.0", port)
 
 
+SAVE_EVERY_S = float(os.environ.get("SIM_SAVE_EVERY_S", "30"))
+
+
 async def main():
     p = argparse.ArgumentParser()
     p.add_argument("--config", default=os.environ.get("SIM_CONFIG", "/app/config/site-demo.yaml"))
@@ -637,13 +641,25 @@ async def main():
 
     await server.start()
     log.info("Serveur OPC UA démarré sur %s", args.endpoint)
-    saved_at = time.monotonic()
+    # « docker stop » envoie SIGTERM : sans gestionnaire, le processus (PID 1) l'ignore et finit tué
+    # sans avoir enregistré ses compteurs. On sort proprement de la boucle pour passer par `finally`.
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):
+            pass
+
+    async def autosave():   # tâche à part : cadence indépendante de la durée d'un tour de boucle
+        while True:
+            await asyncio.sleep(SAVE_EVERY_S)
+            ctl.save_counters()
+
+    saver = asyncio.create_task(autosave())
     try:
         nxt = time.monotonic()
-        while True:
-            if time.monotonic() - saved_at >= 30:
-                ctl.save_counters()
-                saved_at = time.monotonic()
+        while not stop.is_set():
             period = float(cfg.get("update_interval_s", 1.0))
             plant.step(period)   # le premier tour publie aussi les valeurs initiales
             # effet « Coupure OPC UA » : le serveur s'arrête puis redémarre (les clients se reconnectent)
@@ -671,9 +687,15 @@ async def main():
             delay = nxt - time.monotonic()
             if delay < -5 * period:   # retard (coupure, changement de période) : on repart d'ici
                 nxt = time.monotonic()
-            await asyncio.sleep(max(0.0, delay))
+            try:
+                await asyncio.wait_for(stop.wait(), max(0.0, delay))
+            except asyncio.TimeoutError:
+                pass
+        log.info("arrêt demandé")
     finally:
+        saver.cancel()
         ctl.save_counters()
+        log.info("compteurs enregistrés")
         if ctl.opc_up:
             await server.stop()
 
