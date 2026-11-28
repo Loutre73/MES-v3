@@ -1,0 +1,14 @@
+# Contexte des images construites depuis la racine (api, ops) : rien de propre à un site
+.git
+**/__pycache__
+**/.pytest_cache
+deploy/site.env
+deploy/site.env.*
+!deploy/site.env.example
+deploy/.mesctl
+deploy/backups
+deploy/certs
+deploy/mac
+deploy/*.tar
+deploy/*.tar.gz
+deploy/cj

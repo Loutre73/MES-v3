@@ -10,7 +10,8 @@ Bibliothèque standard Python seulement. Sécurité :
 - session MES vérifiée ici (même cookie signé que l'API, clé SECRET_KEY) ;
 - lecture pour toute session, actions réservées au rôle admin ;
 - liste fermée d'actions Docker (start, stop, restart, logs) sur les seuls services du projet ;
-  aucune création, suppression de conteneur ou de volume ;
+  aucune suppression de volume ; seul conteneur créé : « mes-maj », pour les opérations de version
+  (mise à jour, retour arrière, sauvegarde), depuis l'image mes-ops d'un numéro de version vérifié ;
 - base de données : uniquement les fonctions historian.stockage_etat() et historian.purger(), appelées
   par psql dans le conteneur de la base, avec des paramètres vérifiés ici (aucun SQL libre).
 """
@@ -494,6 +495,382 @@ def overview(user: dict) -> dict:
     }
 
 
+# ----------------------------------------------------------------------------- versions et mises à jour
+# Les opérations de version (mise à jour, retour arrière, sauvegarde) tournent dans un conteneur à part,
+# « mes-maj », créé depuis l'image mes-ops de la version visée : il lance maj.sh puis mesctl, survit au
+# remplacement de cette console pendant la mise à jour, et ses journaux donnent la progression.
+REGISTRY = os.environ.get("MES_REGISTRY", "ghcr.io/loutre73")
+RELEASES_URL = os.environ.get("MES_RELEASES_URL", "")
+SITE = Path(os.environ.get("MES_SITE", "/mes"))           # dossier d'installation, monté en lecture
+JOB_NAME = "mes-maj"
+VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9][a-z0-9.]{0,20})?$")
+ETAPES = {
+    "update": ["Préparation", "Fichiers d'installation", "Sauvegarde de la base", "Récupération des images",
+               "Migration de la base", "Redémarrage des services", "Contrôle de santé"],
+    "rollback": ["Préparation", "Fichiers d'installation", "Restauration de la sauvegarde",
+                 "Redémarrage des services", "Contrôle de santé"],
+    "backup": ["Préparation", "Sauvegarde de la base"],
+}
+ACTION_LABEL = {"update": "Mise à jour", "rollback": "Retour à la version précédente", "backup": "Sauvegarde"}
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def version_key(v: str):
+    """Tri des versions : 0.10.0 après 0.9.0, une pré-version (0.2.0-essai) avant la version finale."""
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$", v or "")
+    if not m:
+        return (-1, -1, -1, 0, v)
+    return (int(m[1]), int(m[2]), int(m[3]), 0 if m[4] else 1, m[4] or "")
+
+
+def site_env() -> dict:
+    out = {}
+    try:
+        for line in (SITE / "deploy" / "site.env").read_text(encoding="utf-8").splitlines():
+            k, sep, v = line.partition("=")
+            if sep and re.fullmatch(r"[A-Z_0-9]+", k):
+                out[k] = v
+    except OSError:
+        pass
+    return out
+
+
+def read_state(name: str) -> str | None:
+    try:
+        return (SITE / "deploy" / ".mesctl" / name).read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def site_history(n: int = 50) -> list[dict]:
+    try:
+        lines = (SITE / "deploy" / ".mesctl" / "historique.tsv").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in reversed(lines[-n:]):
+        p = line.split("\t")
+        if len(p) >= 6:
+            out.append({"t": p[0], "action": p[1], "de": p[2], "vers": p[3], "resultat": p[4], "qui": p[5]})
+    return out
+
+
+def backups(env: dict) -> dict:
+    rel = env.get("BACKUP_DIR") or "./backups"
+    if rel.startswith("/"):
+        return {"dossier": rel, "visible": False, "fichiers": []}
+    d = SITE / "deploy" / rel
+    files = []
+    try:
+        for f in d.glob("mes-*.dump"):
+            st = f.stat()
+            m = re.match(r"mes-(\d{8}-\d{6})-(.+)\.dump$", f.name)
+            files.append({"nom": f.name, "octets": st.st_size, "t": st.st_mtime, "version": m[2] if m else None})
+    except OSError:
+        pass
+    files.sort(key=lambda x: -x["t"])
+    return {"dossier": rel, "visible": True, "fichiers": files}
+
+
+def host_dir() -> str:
+    """Chemin, sur l'hôte, du dossier d'installation (parent du dossier deploy de docker-compose.yml)."""
+    if os.environ.get("MES_DIR_HOTE"):
+        return os.environ["MES_DIR_HOTE"]
+    me = docker("GET", f"/containers/{socket.gethostname()}/json")
+    wd = (me.get("Config", {}).get("Labels") or {}).get("com.docker.compose.project.working_dir")
+    if not wd:
+        raise RuntimeError("dossier d'installation inconnu (lancez la pile avec mesctl)")
+    return str(Path(wd).parent)
+
+
+def local_versions() -> dict[str, dict]:
+    """Versions dont l'image mes-ops est sur ce serveur (téléchargée, archive chargée ou version d'essai)."""
+    out = {}
+    try:
+        imgs = docker("GET", "/images/json?filters=" + urllib.parse.quote(json.dumps({"reference": [f"{REGISTRY}/mes-ops"]})))
+    except Exception:  # noqa: BLE001
+        return out
+    for im in imgs or []:
+        for ref in im.get("RepoTags") or []:
+            tag = ref.rsplit(":", 1)[-1]
+            if VERSION_RE.match(tag):
+                out[tag] = {"version": tag, "t": im.get("Created"), "octets": im.get("Size")}
+    return out
+
+
+RELEASES_CACHE: dict = {"at": 0, "data": None, "erreur": None}
+
+
+def online_versions() -> tuple[list[dict], str | None]:
+    """Versions publiées (API des versions GitHub), gardées 10 minutes ; aucune recherche si l'adresse est vide."""
+    if not RELEASES_URL:
+        return [], None
+    if time.time() - RELEASES_CACHE["at"] < 600:
+        return RELEASES_CACHE["data"] or [], RELEASES_CACHE["erreur"]
+    data, err = [], None
+    try:
+        req = urllib.request.Request(RELEASES_URL + "?per_page=20", headers={"Accept": "application/vnd.github+json", "User-Agent": "mes-ops"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            for rel in json.loads(r.read()):
+                tag = (rel.get("tag_name") or "").removeprefix("v")
+                if rel.get("draft") or not VERSION_RE.match(tag):
+                    continue
+                archive = next((a.get("browser_download_url") for a in rel.get("assets") or []
+                                if a.get("name", "").startswith("mes-images-")), None)
+                data.append({"version": tag, "t": rel.get("published_at"), "titre": rel.get("name") or "",
+                             "notes": (rel.get("body") or "")[:2000], "page": rel.get("html_url"), "archive": archive,
+                             "pre": bool(rel.get("prerelease"))})
+    except Exception as e:  # noqa: BLE001
+        err = f"liste des versions en ligne indisponible ({e})"
+    RELEASES_CACHE.update(at=time.time(), data=data, erreur=err)
+    return data, err
+
+
+def job_steps(action: str, lines: list[str], running: bool, code: int | None) -> list[dict]:
+    """Étapes prévues de l'opération, avec leur état d'après les lignes « ==> » de mesctl et maj.sh."""
+    seen = [ln[4:].strip() for ln in lines if ln.startswith("==> ")]
+    names = list(ETAPES.get(action, []))
+    for s in seen:   # étapes imprévues (retour arrière automatique…)
+        if s not in names:
+            names.append(s)
+    last = max((names.index(s) for s in seen), default=0)
+    out = []
+    for i, n in enumerate(names):
+        if i < last or (i == last and not running and code == 0):
+            st = "fait"
+        elif i == last:
+            st = "en_cours" if running else "echec"
+        else:
+            st = "a_faire" if running or code != 0 else "fait"
+        out.append({"nom": n, "etat": st})
+    return out
+
+
+class Jobs:
+    """Une seule opération de version à la fois ; « Préparation » (téléchargement de l'outil) tourne ici."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.prep: dict | None = None   # {action, version, qui, debut, erreur}
+
+    def inspect(self) -> dict | None:
+        try:
+            return docker("GET", f"/containers/{JOB_NAME}/json")
+        except RuntimeError as e:
+            if "404" in str(e):
+                return None
+            raise
+
+    def state(self) -> dict | None:
+        with self.lock:
+            prep = dict(self.prep) if self.prep else None
+        if prep and not prep.get("fini"):
+            return {"action": prep["action"], "version": prep.get("version"), "qui": prep["qui"], "debut": prep["debut"],
+                    "en_cours": True, "code": None, "fin": None, "lignes": [prep.get("message", "")],
+                    "etapes": [{"nom": n, "etat": "en_cours" if i == 0 else "a_faire"} for i, n in enumerate(ETAPES[prep["action"]])]}
+        if prep and prep.get("erreur"):
+            return {"action": prep["action"], "version": prep.get("version"), "qui": prep["qui"], "debut": prep["debut"],
+                    "en_cours": False, "code": 1, "fin": prep.get("fin"), "lignes": [prep["erreur"]],
+                    "etapes": [{"nom": "Préparation", "etat": "echec"}]}
+        info = self.inspect()
+        if info is None:
+            return None
+        lab = info.get("Config", {}).get("Labels") or {}
+        st = info.get("State", {})
+        running = bool(st.get("Running"))
+        code = None if running else st.get("ExitCode")
+        try:
+            raw = docker("GET", f"/containers/{JOB_NAME}/logs?stdout=1&stderr=1&tail=600", raw=True)
+            lines = [ANSI.sub("", ln) for ln in demux(raw)]
+        except Exception:  # noqa: BLE001
+            lines = []
+        action = lab.get("mes.maj.action", "")
+        self.journalise(info, action, lab, code)
+        return {"action": action, "version": lab.get("mes.maj.version") or None, "de": lab.get("mes.maj.de"),
+                "qui": lab.get("mes.maj.qui"), "debut": parse_time(st.get("StartedAt", "")),
+                "fin": None if running else parse_time(st.get("FinishedAt", "")), "en_cours": running, "code": code,
+                "lignes": lines[-300:], "etapes": job_steps(action, lines, running, code)}
+
+    def journalise(self, info: dict, action: str, lab: dict, code) -> None:
+        """Fin d'opération inscrite une fois au journal (même si cette console a été remplacée entre-temps)."""
+        if code is None:
+            return
+        mark = DATA / "maj-journalisee"
+        try:
+            if mark.exists() and mark.read_text() == info["Id"]:
+                return
+            DATA.mkdir(parents=True, exist_ok=True)
+            mark.write_text(info["Id"])
+        except OSError:
+            return
+        v = lab.get("mes.maj.version")
+        label = ACTION_LABEL.get(action, action) + (f" vers {v}" if v and action == "update" else "")
+        journal_add(lab.get("mes.maj.qui", "?"), label, code == 0,
+                    "" if code == 0 else f"code {code}")
+
+    def start(self, action: str, who: str, version: str | None = None) -> None:
+        if action not in ETAPES:
+            raise ValueError("opération inconnue")
+        with self.lock:
+            if self.prep and not self.prep.get("fini"):
+                raise RuntimeError("une opération est déjà en cours")
+            info = self.inspect()
+            if info and (info.get("State") or {}).get("Running"):
+                raise RuntimeError("une opération est déjà en cours")
+            self.prep = {"action": action, "version": version, "qui": who, "debut": time.time(), "message": "Préparation…"}
+        threading.Thread(target=self._run, args=(action, who, version), daemon=True).start()
+
+    def _run(self, action: str, who: str, version: str | None) -> None:
+        try:
+            current = os.environ.get("MES_VERSION", "dev")
+            if action == "update":
+                tool = version
+            elif action == "rollback":
+                tool = read_state("previous_version")
+                if not tool:
+                    raise RuntimeError("aucune version précédente connue")
+            else:
+                tool = current
+            image = f"{REGISTRY}/mes-ops:{tool}"
+            try:
+                docker("GET", f"/images/{urllib.parse.quote(image, safe='/:')}/json")
+            except RuntimeError:
+                self.prep["message"] = f"Téléchargement de {image}"
+                pull_image(image)
+            hdir = host_dir()
+            if self.inspect() is not None:
+                docker("DELETE", f"/containers/{JOB_NAME}?force=true")
+            cmd = [action] + ([version] if action == "update" else [])
+            user = job_user()
+            c = docker("POST", f"/containers/create?name={JOB_NAME}", body={
+                "Image": image, "Entrypoint": ["/app/maj.sh"], "Cmd": cmd, **({"User": user["user"]} if user else {}),
+                "Env": [f"MES_DIR={hdir}", f"MES_QUI={who}", "DOCKER_CONFIG=/tmp/.docker"],
+                "Labels": {"mes.maj.action": action, "mes.maj.version": version or (tool if action == "rollback" else ""),
+                           "mes.maj.de": current, "mes.maj.qui": who},
+                "HostConfig": {"Binds": [f"{SOCKET}:/var/run/docker.sock", f"{hdir}:{hdir}"], "GroupAdd": user.get("groupes", []),
+                               "LogConfig": {"Type": "json-file", "Config": {"max-size": "5m"}}}})
+            docker("POST", f"/containers/{c['Id']}/start", timeout=30)
+            with self.lock:
+                self.prep = {**self.prep, "fini": True}
+        except Exception as e:  # noqa: BLE001
+            with self.lock:
+                self.prep = {**(self.prep or {}), "fini": True, "erreur": str(e), "fin": time.time()}
+            label = ACTION_LABEL[action] + (f" vers {version}" if version else "")
+            journal_add(who, label, False, str(e))
+
+
+JOBS = Jobs()
+
+
+def job_user() -> dict:
+    """La tâche écrit dans le dossier d'installation sous l'identité de son propriétaire (fichiers modifiables
+    ensuite par mesctl en ligne de commande), avec le groupe du socket Docker."""
+    try:
+        st = (SITE / "deploy").stat()
+        sock = os.stat(SOCKET)
+    except OSError:
+        return {}
+    if st.st_uid == 0:
+        return {}
+    return {"user": f"{st.st_uid}:{st.st_gid}", "groupes": [str(sock.st_gid)]}
+
+
+def pull_image(image: str) -> None:
+    repo, _, tag = image.rpartition(":")
+    conn = UnixConnection(timeout=1800)
+    try:
+        conn.request("POST", f"/images/create?fromImage={urllib.parse.quote(repo, safe='')}&tag={urllib.parse.quote(tag)}")
+        r = conn.getresponse()
+        body = r.read().decode(errors="replace")
+        if r.status >= 400:
+            raise RuntimeError(f"image {image} introuvable : {body[:200]}")
+        for line in body.splitlines():
+            try:
+                if "error" in json.loads(line):
+                    raise RuntimeError(f"image {image} introuvable : {json.loads(line)['error']}")
+            except ValueError:
+                pass
+    finally:
+        conn.close()
+
+
+def load_archive(stream, length: int) -> list[str]:
+    """Charge une archive d'images (docker save, .tar ou .tar.gz) en la passant directement à Docker, sans copie."""
+    conn = UnixConnection(timeout=3600)
+    try:
+        conn.putrequest("POST", "/images/load?quiet=1")
+        conn.putheader("Content-Type", "application/x-tar")
+        conn.putheader("Content-Length", str(length))
+        conn.endheaders()
+        left = length
+        while left > 0:
+            chunk = stream.read(min(1 << 20, left))
+            if not chunk:
+                raise RuntimeError("envoi interrompu")
+            conn.send(chunk)
+            left -= len(chunk)
+        r = conn.getresponse()
+        body = r.read().decode(errors="replace")
+        if r.status >= 400:
+            raise RuntimeError(f"archive refusée par Docker : {body[:200]}")
+    finally:
+        conn.close()
+    loaded, errors = [], []
+    for line in body.splitlines():
+        try:
+            j = json.loads(line)
+        except ValueError:
+            continue
+        if j.get("error"):
+            errors.append(j["error"])
+        m = re.search(r"Loaded image: (\S+)", j.get("stream", ""))
+        if m:
+            loaded.append(m[1])
+    if errors:
+        raise RuntimeError("archive invalide : " + errors[0])
+    return loaded
+
+
+def make_trial(version: str) -> list[str]:
+    """Poste de développement : donne aux images :dev un numéro de version, pour essayer mise à jour et retour."""
+    if os.environ.get("MES_VERSION", "dev") != "dev":
+        raise PermissionError("version d'essai : seulement sur une installation de développement (version dev)")
+    if not VERSION_RE.match(version):
+        raise ValueError("numéro de version invalide (exemple : 0.0.1-essai)")
+    done = []
+    imgs = docker("GET", "/images/json")
+    for im in imgs or []:
+        for ref in im.get("RepoTags") or []:
+            if ref.startswith(REGISTRY + "/mes-") and ref.endswith(":dev"):
+                repo = ref.rsplit(":", 1)[0]
+                docker("POST", f"/images/{urllib.parse.quote(ref, safe='/:')}/tag?repo={urllib.parse.quote(repo, safe='')}&tag={version}")
+                done.append(repo.rsplit("/", 1)[-1])
+    if "mes-ops" not in done:
+        raise RuntimeError("images :dev introuvables sur ce serveur")
+    return sorted(done)
+
+
+def versions_overview() -> dict:
+    env = site_env()
+    current = os.environ.get("MES_VERSION", "dev")
+    local = local_versions()
+    online, err = online_versions()
+    by = {}
+    for o in online:
+        by[o["version"]] = {**o, "locale": o["version"] in local, "en_ligne": True}
+    for v, l in local.items():
+        by.setdefault(v, {"version": v, "t": l["t"], "titre": "", "notes": "", "page": None, "archive": None,
+                          "pre": "-" in v, "en_ligne": False})["locale"] = True
+    items = sorted(by.values(), key=lambda x: version_key(x["version"]), reverse=True)
+    for it in items:
+        it["actuelle"] = it["version"] == current
+        it["plus_recente"] = current == "dev" or version_key(it["version"]) > version_key(current)
+    return {"actuelle": current, "precedente": read_state("previous_version"), "dev": current == "dev",
+            "depot_git": (SITE / ".git").exists(), "site_visible": (SITE / "deploy").exists(),
+            "versions": items, "en_ligne": bool(RELEASES_URL), "erreur_en_ligne": err,
+            "historique": site_history(), "sauvegardes": backups(env), "operation": JOBS.state()}
+
+
 # ----------------------------------------------------------------------------- serveur HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = "mes-ops"
@@ -559,6 +936,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.err(404, str(e))
             except Exception as e:  # noqa: BLE001
                 return self.err(503, f"Base indisponible : {e}")
+        if path == "/api/ops/maj":
+            try:
+                return self.send(200, versions_overview())
+            except Exception as e:  # noqa: BLE001
+                return self.err(502, str(e))
         if path == "/api/ops/historisation":
             r = http_json("GET", COLLECTOR_URL + "/historisation")
             return self.send(200, r) if r is not None else self.err(503, "Collecteur injoignable")
@@ -587,6 +969,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.err(401, "Connexion requise")
         if u.get("role") != "admin":
             return self.err(403, "Action réservée aux administrateurs")
+        if method == "POST" and path == "/api/ops/maj/archive":
+            return self.archive(u.get("username") or "?")
         # contre la falsification de requête : JSON obligatoire (un formulaire d'un autre site ne peut pas l'envoyer)
         if not (self.headers.get("Content-Type") or "").startswith("application/json"):
             return self.err(415, "JSON attendu")
@@ -664,6 +1048,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 journal_add(who, "Règles de simulation modifiées", True, json.dumps(body, ensure_ascii=False)[:300])
             return self.send(200, r)
+        m = re.fullmatch(r"/api/ops/maj/(lancer|retour|sauvegarde|essai)", path)
+        if method == "POST" and m:
+            return self.maj(m.group(1), body, who)
         sim = sim_route(method, path, body)
         if sim:
             sub, label = sim
@@ -676,6 +1063,62 @@ class Handler(BaseHTTPRequestHandler):
                 journal_add(who, label(r))
             return self.send(200, r)
         return self.err(404, "Introuvable")
+
+
+    def maj(self, op: str, body: dict, who: str):
+        current = os.environ.get("MES_VERSION", "dev")
+        try:
+            if op == "essai":
+                v = str(body.get("version") or "")
+                images = make_trial(v)
+                journal_add(who, f"Version d'essai {v} créée", True, ", ".join(images))
+                return self.send(200, {"version": v, "images": images})
+            if op == "lancer":
+                v = str(body.get("version") or "")
+                if not VERSION_RE.match(v):
+                    raise ValueError("numéro de version invalide")
+                if v == current:
+                    raise ValueError(f"la version {v} est déjà en service")
+                if current != "dev" and version_key(v) < version_key(current):
+                    raise ValueError("version plus ancienne : utilisez le retour à la version précédente")
+                JOBS.start("update", who, v)
+                journal_add(who, f"Mise à jour {current} → {v} lancée")
+            elif op == "retour":
+                prev = read_state("previous_version")
+                if not prev:
+                    raise ValueError("aucune version précédente connue")
+                JOBS.start("rollback", who, prev)
+                journal_add(who, f"Retour à la version {prev} lancé")
+            else:
+                JOBS.start("backup", who)
+                journal_add(who, "Sauvegarde lancée")
+        except PermissionError as e:
+            return self.err(403, str(e))
+        except ValueError as e:
+            return self.err(400, str(e))
+        except RuntimeError as e:
+            return self.err(409, str(e))
+        return self.send(202, {"ok": True})
+
+    def archive(self, who: str):
+        # pas de JSON ici (fichier binaire) : l'en-tête propre à la console bloque les envois d'un autre site
+        if self.headers.get("X-MES-Console") != "1":
+            return self.err(415, "Envoi refusé")
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = 0
+        if n <= 0:
+            return self.err(411, "Taille de l'archive inconnue")
+        try:
+            loaded = load_archive(self.rfile, n)
+        except Exception as e:  # noqa: BLE001
+            journal_add(who, "Archive de version chargée", False, str(e))
+            self.close_connection = True
+            return self.err(400, str(e))
+        versions = sorted({ref.rsplit(":", 1)[-1] for ref in loaded if ref.startswith(f"{REGISTRY}/mes-ops:")}, key=version_key)
+        journal_add(who, "Archive chargée" + (f" : version {', '.join(versions)}" if versions else ""), True, f"{len(loaded)} images")
+        return self.send(200, {"images": loaded, "versions": versions})
 
 
 def describe_hist(body: dict) -> str:

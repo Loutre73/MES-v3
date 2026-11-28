@@ -2,7 +2,7 @@
 // Servie par l'agent d'exploitation (/api/ops/...) : elle reste disponible quand l'application est arrêtée.
 import { html, render, useState, useEffect, useRef } from "./vendor/preact-htm.module.js";
 import { Band, Icon, Dialog, num, dur } from "./lib.js";
-import { tr, locale, onLang, getLang } from "./i18n.js";
+import { tr, N_, locale, onLang, getLang } from "./i18n.js";
 
 // la console relit ses libellés au changement de langue
 onLang(() => location.reload());
@@ -950,6 +950,127 @@ function GroupDialog({ id, g, s, admin, toast, reload, onClose }) {
   <//>`;
 }
 
+// ----------------------------------------------------------------------------- 4 · Mises à jour
+// Étapes et opérations renvoyées par l'agent (texte fixe), traduites ici
+N_("Préparation"); N_("Fichiers d'installation"); N_("Sauvegarde de la base"); N_("Récupération des images");
+N_("Migration de la base"); N_("Redémarrage des services"); N_("Contrôle de santé"); N_("Restauration de la sauvegarde");
+const OP_LABEL = { update: N_("Mise à jour"), rollback: N_("Retour à la version précédente"), backup: N_("Sauvegarde") };
+const HIST_LABEL = { update: N_("Mise à jour"), rollback: N_("Retour arrière") };
+const STEP_MARK = { fait: "✓", echec: "✕", en_cours: "", a_faire: "" };
+const dateCourte = t => t ? new Date(typeof t === "number" ? t * 1000 : t).toLocaleString(locale(), { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–";
+
+function sendArchive(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/ops/maj/archive");
+    x.setRequestHeader("X-MES-Console", "1");
+    x.setRequestHeader("Content-Type", "application/octet-stream");
+    x.upload.onprogress = e => e.lengthComputable && onProgress(e.loaded / e.total);
+    x.onload = () => {
+      let d = {};
+      try { d = JSON.parse(x.responseText); } catch (e) { /* réponse non JSON */ }
+      x.status < 300 ? resolve(d) : reject(new Error(d.detail || x.statusText));
+    };
+    x.onerror = () => reject(new Error(tr("Envoi interrompu")));
+    x.send(file);
+  });
+}
+
+function Updates({ admin, toast, setConfirm }) {
+  const m = usePoll("/maj", 3000);
+  const [up, setUp] = useState(null);       // envoi d'archive : null | 0..1 | "docker"
+  const [essai, setEssai] = useState("0.0.1-essai");
+  const logBox = useRef();
+  const d = m.data;
+  const op = d && d.operation;
+  const busy = !!(op && op.en_cours) || up !== null;
+  useEffect(() => { if (logBox.current) logBox.current.scrollTop = logBox.current.scrollHeight; }, [op && op.lignes.length]);
+  if (!d) return html`<section class="tile"><p>${m.error || tr("Chargement…")}</p></section>`;
+  const call = async (path, body, okText) => {
+    try { await ops("/maj/" + path, { method: "POST", body }); toast({ ok: okText }); } catch (e) { toast({ error: e.message }); }
+    m.reload();
+  };
+  const install = v => setConfirm({
+    title: tr("Installer la version {v} ?", { v: v.version }), danger: false, ok: tr("Installer"),
+    text: tr("Sauvegarde automatique, puis quelques minutes d'indisponibilité. La collecte continue dans le tampon du collecteur."),
+    onOk: () => call("lancer", { version: v.version }, tr("Mise à jour vers {v} lancée", { v: v.version })) });
+  const rollback = () => setConfirm({
+    title: tr("Revenir à la version {v} ?", { v: d.precedente }), ok: tr("Revenir"),
+    text: tr("La base revient à la sauvegarde d'avant la mise à jour : les données collectées depuis sont perdues."),
+    onOk: () => call("retour", {}, tr("Retour à la version {v} lancé", { v: d.precedente })) });
+  const upload = async ev => {
+    const f = ev.target.files[0]; ev.target.value = "";
+    if (!f) return;
+    setUp(0);
+    try {
+      const r = await sendArchive(f, p => setUp(p >= 1 ? "docker" : p));
+      toast({ ok: r.versions.length ? tr("Archive chargée : version {v}", { v: r.versions.join(", ") }) : tr("Archive chargée : {n} images", { n: r.images.length }) });
+    } catch (e) { toast({ error: e.message }); }
+    setUp(null); m.reload();
+  };
+  const st = !op ? null : op.en_cours ? { kind: "warn", label: tr("En cours") } : op.code === 0 ? { kind: "good", label: tr("Terminée") } : { kind: "bad", label: tr("Échec") };
+  const lastErr = op && !op.en_cours && op.code !== 0 && [...op.lignes].reverse().find(l => /Erreur|Error|introuvable|refus/i.test(l));
+  const bk = d.sauvegardes;
+  return html`<div class="maj-view">
+    <div class="maj-left">
+      <section class="tile" aria-label=${tr("Version en service")}>
+        <div class="th"><h2>${tr("Version en service")}</h2><span class="spacer"></span>
+          ${d.dev && html`<${Pill} kind="info">${tr("Développement")}<//>`}</div>
+        <div class="big"><b>${d.actuelle}</b>${d.historique[0] && d.historique[0].resultat === "ok" && html`<span class="sub">${tr("depuis le {d}", { d: dateCourte(d.historique[0].t) })}</span>`}</div>
+        <div class="actions">
+          <button type="button" disabled=${!admin || busy || !d.precedente} onClick=${rollback}>${d.precedente ? tr("Revenir à {v}", { v: d.precedente }) : tr("Revenir à la version précédente")}</button>
+          <button type="button" disabled=${!admin || busy} onClick=${() => call("sauvegarde", {}, tr("Sauvegarde lancée"))}>${tr("Sauvegarder")}</button>
+        </div>
+        ${d.dev && html`<div class="actions"><span class="sub">${tr("Version d'essai")}</span>
+          <input class="maj-essai" value=${essai} onInput=${e => setEssai(e.target.value.trim())} aria-label=${tr("Numéro de la version d'essai")} disabled=${!admin} />
+          <button type="button" class="sm" disabled=${!admin || busy || !essai} onClick=${() => call("essai", { version: essai }, tr("Version d'essai {v} créée", { v: essai }))}>${tr("Créer")}</button></div>`}
+      </section>
+      <section class="tile maj-versions" aria-label=${tr("Versions")}>
+        <div class="th"><h2>${tr("Versions")}</h2><span class="spacer"></span>
+          <label class=${"btn sm" + (!admin || busy ? " disabled" : "")}>${up === null ? tr("Charger une archive…") : up === "docker" ? tr("Chargement dans Docker…") : tr("Envoi {p} %", { p: Math.round(up * 100) })}
+            <input type="file" accept=".tar,.gz,.tgz" hidden disabled=${!admin || busy} onChange=${upload} /></label></div>
+        ${typeof up === "number" && html`<div class="gauge"><div style=${{ width: up * 100 + "%", background: "var(--green)" }}></div></div>`}
+        ${d.erreur_en_ligne && html`<span class="sub small warn-tx">${tr("Versions en ligne indisponibles")}</span>`}
+        <div class="scroll lst">${d.versions.length ? d.versions.map(v => html`<div class="maj-v">
+          <b class="num">${v.version}</b>
+          <span class="sub small">${v.t ? dateCourte(v.t) : ""}</span>
+          ${v.actuelle ? html`<${Pill} kind="good">${tr("En service")}<//>` : v.locale ? html`<${Pill} kind="info">${tr("Sur ce serveur")}<//>` : html`<${Pill} kind="idle">${tr("En ligne")}<//>`}
+          ${v.pre && html`<${Pill} kind="warn">${tr("Essai")}<//>`}
+          <span class="spacer"></span>
+          ${v.page && html`<a class="small" href=${v.page} target="_blank" rel="noopener">${tr("Notes")}</a>`}
+          ${v.archive && !v.locale && html`<a class="small" href=${v.archive} title=${tr("Archive pour un site sans Internet")}>${tr("Archive")}</a>`}
+          ${!v.actuelle && v.plus_recente && html`<button type="button" class="sm primary" disabled=${!admin || busy} onClick=${() => install(v)}>${tr("Installer")}</button>`}
+        </div>`) : html`<span class="sub">${d.en_ligne ? tr("Aucune version publiée.") : tr("Aucune version sur ce serveur : chargez une archive.")}</span>`}</div>
+      </section>
+    </div>
+    <section class="tile maj-op" aria-label=${tr("Opération")}>
+      <div class="th"><h2>${op ? tr(OP_LABEL[op.action] || op.action) + (op.version && op.action !== "backup" ? " · " + op.version : "") : tr("Opération")}</h2><span class="spacer"></span>
+        ${st && html`<${Pill} kind=${st.kind}>${st.label}<//>`}</div>
+      ${!op ? html`<p class="sub">${tr("Aucune opération récente.")}</p>` : html`
+        <ol class="maj-steps">${op.etapes.map(s => html`<li class=${s.etat}><i>${STEP_MARK[s.etat]}</i>${tr(s.nom)}</li>`)}</ol>
+        ${lastErr && html`<p class="bad-tx small" style="margin:0">${lastErr}</p>`}
+        ${m.error && op.en_cours && html`<p class="sub small warn-tx" style="margin:0">${tr("Console en cours de remplacement…")}</p>`}
+        <div class="logs maj-log" ref=${logBox}>${op.lignes.map(l => html`<div class=${l.startsWith("==> ") ? "step-ln" : /Erreur|ERROR/.test(l) ? "bad-tx" : ""}>${l}</div>`)}</div>
+        <span class="sub small">${op.qui} · ${dateCourte(op.debut)}${op.fin ? " → " + hhmm(op.fin * 1000) : ""}</span>`}
+    </section>
+    <section class="tile maj-hist" aria-label=${tr("Historique des versions")}>
+      <div class="th"><h2>${tr("Historique")}</h2></div>
+      <div class="scroll">${d.historique.length ? html`<table><tbody>${d.historique.map(h => html`<tr>
+        <td class="sub">${dateCourte(h.t)}</td><td>${tr(HIST_LABEL[h.action] || h.action)}</td>
+        <td>${h.de} → <b>${h.vers}</b></td>
+        <td>${h.resultat === "ok" ? html`<${Pill} kind="good">${tr("OK")}<//>` : html`<span class="bad-tx small">${h.resultat}</span>`}</td>
+        <td class="sub">${h.qui}</td></tr>`)}</tbody></table>` : html`<span class="sub">${tr("Aucune mise à jour pour l'instant.")}</span>`}</div>
+    </section>
+    <section class="tile maj-bk" aria-label=${tr("Sauvegardes")}>
+      <div class="th"><h2>${tr("Sauvegardes")}</h2><span class="spacer"></span><span class="sub small">${bk.dossier}</span></div>
+      <div class="scroll">${!bk.visible ? html`<span class="sub">${tr("Dossier hors de l'installation : non affiché.")}</span>`
+        : bk.fichiers.length ? html`<table><tbody>${bk.fichiers.map(f => html`<tr>
+          <td class="sub">${dateCourte(f.t)}</td><td>${f.version || ""}</td><td class="num" style="text-align:right">${octets(f.octets)}</td></tr>`)}</tbody></table>`
+        : html`<span class="sub">${tr("Aucune sauvegarde.")}</span>`}</div>
+    </section>
+  </div>`;
+}
+
 // ----------------------------------------------------------------------------- journaux complets
 function Logs({ s, onClose }) {
   const [n, setN] = useState(300);
@@ -974,6 +1095,7 @@ const VIEWS = [
   ["architecture", tr("Architecture"), "M4 6h6v4H4zM14 6h6v4h-6zM9 16h6v4H9zM7 10v3h10v-3M12 13v3"],
   ["services", tr("Services et commandes"), "M4 5h16v4H4zM4 15h16v4H4zM8 7h.01M8 17h.01"],
   ["simulation", tr("Simulation"), "M3 12h4l3-8 4 16 3-8h4"],
+  ["mises-a-jour", tr("Mises à jour"), "M12 4v11M7 10l5 5 5-5M5 20h14"],
   ["grafana", tr("Supervision Grafana"), "M4 19V9M10 19V5M16 19v-7M22 19H2"],
 ];
 
@@ -1037,6 +1159,7 @@ function App() {
         : view === "architecture" ? html`<${Architecture} d=${d} actions=${actions} admin=${admin} setConfirm=${setConfirm} openLogs=${setLogs} />`
         : view === "services" ? html`<${Services} d=${d} actions=${actions} admin=${admin} setConfirm=${setConfirm} openLogs=${setLogs} toast=${toast} />`
         : view === "simulation" ? html`<${Simulation} d=${d} actions=${actions} admin=${admin} toast=${toast} />`
+        : view === "mises-a-jour" ? html`<${Updates} admin=${admin} toast=${toast} setConfirm=${setConfirm} />`
         : html`<${GrafanaView} />`}
       </div>
     </main>

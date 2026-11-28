@@ -66,9 +66,22 @@ Captures d'écran sur le simulateur : [docs/captures](docs/captures).
 
 Recettes : le bloc à créer dans l'automate est décrit dans [docs/automate-recettes.md](docs/automate-recettes.md).
 
-Pour un site sans Internet : `./mesctl package 0.1.0` sur un poste connecté, copier l'archive, puis `./mesctl update 0.1.0 --offline mes-images-0.1.0.tar`.
+Pour un site sans Internet : chaque version publiée sur GitHub porte son archive d'images `mes-images-<version>.tar.gz`, à charger depuis la console (rubrique Mises à jour).
 
 ## Mises à jour
+
+Depuis la console d'exploitation (`/systeme`, rubrique **Mises à jour**, rôle administrateur) :
+
+- **Versions** : versions publiées (GitHub) et versions déjà présentes sur le serveur ; **Installer** lance la mise à jour ;
+- **Charger une archive…** : site sans Internet, l'archive `mes-images-<version>.tar.gz` est envoyée depuis le navigateur ;
+- **Revenir à …** : version précédente et restauration de la sauvegarde d'avant mise à jour ;
+- **Sauvegarder** : sauvegarde complète de la base, à la demande ;
+- progression étape par étape, journal, historique des versions et liste des sauvegardes ;
+- poste de développement (version `dev`) : **Version d'essai** donne un numéro aux images construites localement, pour essayer mise à jour et retour arrière.
+
+L'opération tourne dans un conteneur à part (`mes-maj`) créé depuis l'image `mes-ops` de la version visée : elle apporte les fichiers d'installation de cette version (`docker-compose.yml`, `mesctl`, tableaux Grafana ; un dossier qui est un dépôt git les garde), puis lance `mesctl`. Une version se publie en créant une version GitHub `vX.Y.Z` : images et archive hors ligne sont produites par la CI.
+
+En ligne de commande :
 
 ```bash
 ./mesctl update 0.2.0       # sauvegarde, nouvelles images, migrations, redémarrage, contrôle de santé
@@ -76,9 +89,8 @@ Pour un site sans Internet : `./mesctl package 0.1.0` sur un poste connecté, co
 ./mesctl backup             # sauvegarde complète (rotation selon BACKUP_KEEP)
 ```
 
-Les nouveaux paramètres d'une version sont ajoutés automatiquement à `site.env`. Le collecteur redémarre en dernier. Pendant une coupure de la base, il garde les valeurs dans son tampon disque (`/spool`) et les réécrit dès que la base répond.
+Les nouveaux paramètres d'une version sont ajoutés automatiquement à `site.env`. Le collecteur redémarre en dernier. Pendant une coupure de la base, il garde les valeurs dans son tampon disque (`/spool`) et les réécrit dès que la base répond. Les données collectées entre une mise à jour et un retour arrière sont perdues (la base revient à la sauvegarde).
 
-Les versions sont publiées par la CI : un tag Git `v0.2.0` construit et pousse `ghcr.io/loutre73/mes-*:0.2.0`.
 
 ## Historian
 

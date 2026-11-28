@@ -128,11 +128,17 @@ services:
   ops:
     logging: *journaux
     image: ${MES_REGISTRY:-ghcr.io/loutre73}/mes-ops:${MES_VERSION:-dev}
-    build: ../ops
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile
+      args: {MES_VERSION: "${MES_VERSION:-dev}"}
     restart: unless-stopped
     environment:
       SECRET_KEY: ${SECRET_KEY}
       MES_VERSION: ${MES_VERSION:-dev}
+      MES_REGISTRY: ${MES_REGISTRY:-ghcr.io/loutre73}
+      # versions publiées, lues par la rubrique Mises à jour (vide : aucune recherche en ligne)
+      MES_RELEASES_URL: ${MES_RELEASES_URL-https://api.github.com/repos/loutre73/mes-v3/releases}
       COMPOSE_PROJECT: mes
       AUTH_DISABLED: ${AUTH_DISABLED:-false}
       HISTORIAN_RETENTION: ${HISTORIAN_RETENTION:-1 year}
@@ -143,6 +149,8 @@ services:
       # L'agent n'accepte qu'une liste fermée d'actions, réservées au rôle admin.
       - /var/run/docker.sock:/var/run/docker.sock
       - ops-data:/data
+      # dossier d'installation en lecture : version précédente, historique et sauvegardes (rubrique Mises à jour)
+      - ..:/mes:ro
 
   grafana:
     logging: *journaux
