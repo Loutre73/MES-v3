@@ -3,3 +3,4 @@ site.env
 backups/
 certs/
 *.tar
+*.tar.gz

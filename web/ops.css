@@ -208,10 +208,41 @@ button.round.paused { background: var(--green); border-color: var(--green); colo
 .logs-dlg .th { display: flex; align-items: center; gap: 8px; }
 .logs-dlg .logs { flex: 1; }
 
+/* Mises à jour : versions à gauche, opération en cours à droite, historique et sauvegardes en bas */
+.maj-view { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); grid-template-rows: minmax(0, 1fr) 190px; gap: var(--gap); }
+.maj-left { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; gap: var(--gap); min-height: 0; }
+.maj-left > .tile:first-child { flex: none; }
+.maj-versions { flex: 1; }
+.maj-op { grid-column: 2; grid-row: 1; }
+.maj-bk { grid-column: 1; grid-row: 2; }
+.maj-hist { grid-column: 2; grid-row: 2; }
+.maj-hist table, .maj-bk table { width: 100%; }
+.maj-hist td, .maj-bk td { padding: 4px 8px; font-size: 13px; text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.maj-v { flex-wrap: wrap; }
+.maj-v b { font-size: 15px; min-width: 88px; }
+.maj-essai { width: 130px; }
+label.btn.sm { padding: 4px 10px; font-size: 13px; }
+label.btn.disabled { opacity: .5; pointer-events: none; }
+.maj-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; flex: none; }
+.maj-steps li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; background: var(--fill2); font-size: 13px; font-weight: 600; color: var(--text2); }
+.maj-steps i { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 800; flex: none; border: 2px solid var(--muted); }
+.maj-steps li.fait { color: var(--text); }
+.maj-steps li.fait i { background: var(--green); border-color: var(--green); color: var(--navy); }
+.maj-steps li.en_cours { background: var(--sel); color: var(--text); }
+.maj-steps li.en_cours i { border-color: var(--sky); border-top-color: transparent; animation: maj-spin .9s linear infinite; }
+.maj-steps li.echec { background: var(--red-t); color: var(--red-fg); }
+.maj-steps li.echec i { background: var(--red); border-color: var(--red); color: #fff; }
+@keyframes maj-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .maj-steps li.en_cours i { animation: none; } }
+.maj-log { flex: 1; min-height: 120px; }
+.maj-log .step-ln { color: #7FD3E3; font-weight: 700; }
+
 @media (max-width: 1100px) {
   .arch, .studio { grid-template-columns: 1fr; }
   .lane { grid-template-columns: 130px minmax(0, 1fr); }
   .tl { --lane-l: 142px; min-height: 420px; }
   .svc-top { grid-template-columns: 1fr; }
+  .maj-view { grid-template-columns: 1fr; grid-template-rows: none; }
+  .maj-left, .maj-op, .maj-bk, .maj-hist { grid-column: auto; grid-row: auto; }
   main.fit { overflow: auto; }
 }
